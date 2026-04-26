@@ -41,6 +41,10 @@ function escapeHtml(str) {
     .replace(/"/g, '&quot;');
 }
 
+function _norm(value) {
+  return String(value ?? '').trim().toLowerCase();
+}
+
 // ─── Public getters ───────────────────────────────────────────────────────────
 
 export function getExpenseCategories() {
@@ -195,6 +199,10 @@ function _renderSubCategories() {
   }
 
   const expandedMap = container._expandedMap ?? {};
+  const suggestionKeyByNorm = Object.keys(CATEGORY_SUGGESTIONS).reduce((acc, key) => {
+    acc[_norm(key)] = key;
+    return acc;
+  }, {});
 
   const grouped = {};
   records.forEach(r => {
@@ -221,12 +229,13 @@ function _renderSubCategories() {
             const exp = !!expandedMap[cat];
             const visible = exp ? subs : subs.slice(0, SUBCAT_ROW_CHIPS_VISIBLE);
             const hidden = subs.length - SUBCAT_ROW_CHIPS_VISIBLE;
-            const knownSubs = (CATEGORY_SUGGESTIONS[cat] ?? []).map(s => s.toLowerCase());
+            const suggestedKey = suggestionKeyByNorm[_norm(cat)] ?? null;
+            const knownSubs = (suggestedKey ? CATEGORY_SUGGESTIONS[suggestedKey] : []).map(s => _norm(s));
             return `<tr class="sct-row">
               <td class="sct-td-cat"><span class="sct-cat-dot"></span>${escapeHtml(cat)}</td>
               <td class="sct-td-subs">
                 ${visible.map(sub => {
-                  const isKnown = knownSubs.includes(sub.toLowerCase());
+                  const isKnown = knownSubs.includes(_norm(sub));
                   return `<span class="cat-tag cat-tag-sub cat-tag-deletable${isKnown ? ' cat-tag-verified' : ''}">
                     ${isKnown ? '<i class="bi bi-check-circle-fill cat-tag-check-icon"></i>' : ''}
                     ${escapeHtml(sub)}
@@ -299,8 +308,8 @@ function _getSmartExpenseSuggestions() {
   const expenses     = store.get('expenses')       ?? [];
   const existingSubs = store.get('subCategories')  ?? [];
   const existingCats = getExpenseCategories();
-  const existingCatSet = new Set(existingCats.map(c => c.toLowerCase()));
-  const existingSubSet = new Set(existingSubs.map(r => r.subCategory.toLowerCase().trim()));
+  const existingCatSet = new Set(existingCats.map(c => _norm(c)));
+  const existingSubSet = new Set(existingSubs.map(r => _norm(r.subCategory)));
 
   const termMap = {};
 
@@ -309,24 +318,24 @@ function _getSmartExpenseSuggestions() {
     if (!term || term.length < 2) return;
 
     // Skip if this term is itself already a main category name
-    if (existingCatSet.has(term.toLowerCase())) return;
+    if (existingCatSet.has(_norm(term))) return;
 
     const cat = e.category;
     if (!cat) return;
 
-    const key = term.toLowerCase();
+    const key = _norm(term);
     if (!termMap[key]) termMap[key] = { displayName: term, count: 0, categories: {} };
     termMap[key].count++;
     termMap[key].categories[cat] = (termMap[key].categories[cat] ?? 0) + 1;
   });
 
   return Object.values(termMap)
-    .filter(t => t.count >= 3 && !existingSubSet.has(t.displayName.toLowerCase().trim()))
+    .filter(t => t.count >= 3 && !existingSubSet.has(_norm(t.displayName)))
     .map(t => {
       const catEntries = Object.entries(t.categories).sort((a, b) => b[1] - a[1]);
       const [topCat, topCount] = catEntries[0];
       const confidence = Math.round((topCount / t.count) * 100);
-      const catExists  = existingCatSet.has(topCat.toLowerCase());
+      const catExists  = existingCatSet.has(_norm(topCat));
       return { term: t.displayName, count: t.count, suggestedParent: topCat, confidence, catExists, breakdown: catEntries };
     })
     .filter(s => s.catExists && s.confidence >= 60)
@@ -386,12 +395,14 @@ function _renderSmartExpenseSuggestions() {
 async function _quickAddFromExpense(btn) {
   const term   = btn.dataset.sesTerm;
   const parent = btn.dataset.sesParent;
+  const normTerm = _norm(term);
+  const normParent = _norm(parent);
   btn.disabled = true;
   btn.innerHTML = '<i class="bi bi-hourglass-split"></i> Adding…';
 
   try {
     const existing = store.get('subCategories') ?? [];
-    if (!existing.some(r => r.category === parent && r.subCategory.toLowerCase() === term.toLowerCase())) {
+    if (!existing.some(r => _norm(r.category) === normParent && _norm(r.subCategory) === normTerm)) {
       await appendRow(CONFIG.sheets.subCategories, [parent, term]);
       const rows = await fetchRows(CONFIG.sheets.subCategories);
       store.set('subCategories', rows.map(r => ({ category: r[0] ?? '', subCategory: r[1] ?? '' })).filter(r => r.category && r.subCategory));
@@ -415,33 +426,49 @@ function _renderSuggestions() {
   const container = document.getElementById('cat-suggestions-panel');
   if (!container) return;
 
-  const existingCats   = new Set((store.get('expenseCategories') ?? []).map(r => r.name.toLowerCase()));
+  const expenseCategoryRecords = store.get('expenseCategories') ?? [];
+  const usingDefaults = expenseCategoryRecords.length === 0;
+  const activeParents = usingDefaults
+    ? [...DEFAULT_EXPENSE_CATEGORIES]
+    : expenseCategoryRecords.map(r => r.name).filter(Boolean);
+
+  const existingCats = new Set(activeParents.map(c => _norm(c)));
+  const suggestionKeys = Object.keys(CATEGORY_SUGGESTIONS);
+  const suggestionKeyByNorm = suggestionKeys.reduce((acc, key) => {
+    acc[_norm(key)] = key;
+    return acc;
+  }, {});
+
   const existingSubs   = store.get('subCategories') ?? [];
   const existingSubMap = {};
   existingSubs.forEach(r => {
-    if (!existingSubMap[r.category]) existingSubMap[r.category] = new Set();
-    existingSubMap[r.category].add(r.subCategory.toLowerCase());
+    const catKey = _norm(r.category);
+    if (!catKey) return;
+    if (!existingSubMap[catKey]) existingSubMap[catKey] = new Set();
+    existingSubMap[catKey].add(_norm(r.subCategory));
   });
 
   // 1. Suggested parent categories not yet added
-  const usingDefaults = (store.get('expenseCategories') ?? []).length === 0;
+  const defaultSet = new Set(DEFAULT_EXPENSE_CATEGORIES.map(d => _norm(d)));
   const missingParents = usingDefaults
-    ? Object.keys(CATEGORY_SUGGESTIONS).filter(p =>
-        !DEFAULT_EXPENSE_CATEGORIES.map(d => d.toLowerCase()).includes(p.toLowerCase())
-      )
-    : Object.keys(CATEGORY_SUGGESTIONS).filter(p => !existingCats.has(p.toLowerCase()));
+    ? suggestionKeys.filter(p => !defaultSet.has(_norm(p)))
+    : suggestionKeys.filter(p => !existingCats.has(_norm(p)));
 
   // 2. Suggested sub-categories per existing parent
-  const allParents = usingDefaults ? DEFAULT_EXPENSE_CATEGORIES : [...existingCats].map(c =>
-    (store.get('expenseCategories') ?? []).find(r => r.name.toLowerCase() === c)?.name ?? c
-  );
+  const allParents = activeParents;
 
   const subSections = [];
   allParents.forEach(cat => {
-    const suggestedKey = Object.keys(CATEGORY_SUGGESTIONS).find(k => k.toLowerCase() === cat.toLowerCase());
+    const suggestedKey = suggestionKeyByNorm[_norm(cat)];
     if (!suggestedKey) return;
-    const alreadyAdded = existingSubMap[cat] ?? new Set();
-    const missing = CATEGORY_SUGGESTIONS[suggestedKey].filter(s => !alreadyAdded.has(s.toLowerCase()));
+    const alreadyAdded = existingSubMap[_norm(cat)] ?? new Set();
+    const seen = new Set();
+    const missing = CATEGORY_SUGGESTIONS[suggestedKey].filter(s => {
+      const key = _norm(s);
+      if (!key || seen.has(key) || alreadyAdded.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
     if (missing.length > 0) subSections.push({ cat, missing });
   });
 
@@ -491,19 +518,32 @@ function _renderSuggestions() {
 async function _quickAddSuggestion(btn) {
   btn.disabled = true;
   const type   = btn.dataset.sugType;
-  const name   = btn.dataset.sugName;
-  const parent = btn.dataset.sugParent;
+  const name   = btn.dataset.sugName?.trim() ?? '';
+  const parent = btn.dataset.sugParent?.trim() ?? '';
+  const normName = _norm(name);
+  const normParent = _norm(parent);
 
   try {
+    if (!name || (type === 'sub' && !parent)) {
+      btn.disabled = false;
+      return;
+    }
+
     if (type === 'parent') {
       const existing = store.get('expenseCategories') ?? [];
-      if (existing.some(r => r.name.toLowerCase() === name.toLowerCase())) return;
+      if (existing.some(r => _norm(r.name) === normName)) {
+        btn.disabled = false;
+        return;
+      }
       await appendRow(CONFIG.sheets.expenseCategories, [name]);
       const rows = await fetchRows(CONFIG.sheets.expenseCategories);
       store.set('expenseCategories', rows.map(r => ({ name: r[0] ?? '' })).filter(r => r.name));
     } else {
       const existing = store.get('subCategories') ?? [];
-      if (existing.some(r => r.category === parent && r.subCategory.toLowerCase() === name.toLowerCase())) return;
+      if (existing.some(r => _norm(r.category) === normParent && _norm(r.subCategory) === normName)) {
+        btn.disabled = false;
+        return;
+      }
       await appendRow(CONFIG.sheets.subCategories, [parent, name]);
       const rows = await fetchRows(CONFIG.sheets.subCategories);
       store.set('subCategories', rows.map(r => ({ category: r[0] ?? '', subCategory: r[1] ?? '' })).filter(r => r.category && r.subCategory));
@@ -606,7 +646,7 @@ function _bindSubCategoryForm() {
     if (hasError) return;
 
     const existing = store.get('subCategories') ?? [];
-    const duplicate = existing.some(r => r.category === category && r.subCategory.toLowerCase() === subCategory.toLowerCase());
+    const duplicate = existing.some(r => _norm(r.category) === _norm(category) && _norm(r.subCategory) === _norm(subCategory));
     if (duplicate) {
       nameInput?.classList.add('is-invalid');
       nameInput?.setCustomValidity('Already exists');
