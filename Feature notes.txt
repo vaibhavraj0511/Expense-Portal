@@ -1,0 +1,10 @@
+
+
+5. Split Expense (Group Expenses) When you go out with friends and split 
+a bill, track who owes what. Integrates with the existing Lendings section
+but with a dedicated "split" UI.
+
+
+
+
+2, 7, 8, 17, 18, 22, 23, 24, 25, 27, 30, 31 expecpt this implemant all the options across all three rounds 
