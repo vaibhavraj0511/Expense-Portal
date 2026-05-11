@@ -2,7 +2,7 @@
 import { CONFIG } from './config.js';
 import { appendRow, fetchRows, writeAllRows } from './api.js';
 import * as store from './store.js';
-import { requireFields } from './validation.js';
+import { epConfirm } from './confirm.js';
 
 // ─── Suggested category map ──────────────────────────────────────────────────
 export const CATEGORY_SUGGESTIONS = {
@@ -106,31 +106,35 @@ export function render() {
     store.get('expenseCategories') ?? [],
     DEFAULT_EXPENSE_CATEGORIES,
     'expenseCategories',
-    CONFIG.sheets.expenseCategories
+    CONFIG.sheets.expenseCategories,
+    'cat-tag-expense'
   );
   _renderList(
     'income-sources-list',
     store.get('incomeSources') ?? [],
     DEFAULT_INCOME_SOURCES,
     'incomeSources',
-    CONFIG.sheets.incomeSources
+    CONFIG.sheets.incomeSources,
+    'cat-tag-income'
   );
   _renderList(
     'vehicle-expense-types-list',
     store.get('vehicleExpenseTypes') ?? [],
     DEFAULT_VEHICLE_EXPENSE_TYPES,
     'vehicleExpenseTypes',
-    CONFIG.sheets.vehicleExpenseTypes
+    CONFIG.sheets.vehicleExpenseTypes,
+    'cat-tag-vehicle'
   );
   _renderSubCategories();
   _renderSuggestions();
   _renderSmartExpenseSuggestions();
   refreshCategoryDropdowns();
+  _updateTabCounts();
 }
 
 const CAT_VISIBLE = 10;
 
-function _renderList(containerId, records, defaults, storeKey, sheetName) {
+function _renderList(containerId, records, defaults, storeKey, sheetName, chipClass = '') {
   const container = document.getElementById(containerId);
   if (!container) return;
 
@@ -141,8 +145,9 @@ function _renderList(containerId, records, defaults, storeKey, sheetName) {
   const hiddenCount = items.length - CAT_VISIBLE;
 
   function makeTag(name) {
-    return `<span class="cat-tag${hasCustom ? ' cat-tag-deletable' : ''}">
+    return `<span class="cat-tag${chipClass ? ' ' + chipClass : ''}${hasCustom ? ' cat-tag-deletable' : ''}">
       ${escapeHtml(name)}
+      ${hasCustom ? `<button type="button" class="cat-tag-rename" aria-label="Rename ${escapeHtml(name)}" data-rename-name="${escapeHtml(name)}" data-store-key="${storeKey}" data-sheet="${sheetName}" title="Rename"><i class="bi bi-pencil-fill"></i></button>` : ''}
       ${hasCustom ? `<button type="button" class="cat-tag-del" aria-label="Delete ${escapeHtml(name)}" data-delete-name="${escapeHtml(name)}" data-store-key="${storeKey}" data-sheet="${sheetName}"><i class="bi bi-x"></i></button>` : ''}
     </span>`;
   }
@@ -152,7 +157,16 @@ function _renderList(containerId, records, defaults, storeKey, sheetName) {
       ? `<button type="button" class="cat-tag cat-tag-more">+${hiddenCount} more</button>`
       : expanded && items.length > CAT_VISIBLE
         ? `<button type="button" class="cat-tag cat-tag-more">Show less</button>`
-        : '');
+        : '') +
+    (!hasCustom ? `<div class="cat-defaults-notice"><i class="bi bi-info-circle me-1"></i>Using built-in defaults · Add above to customize</div>` : '');
+
+  container.querySelectorAll('[data-rename-name]').forEach(btn => {
+    btn.addEventListener('click', () => _handleRename(
+      btn.dataset.renameName,
+      btn.dataset.storeKey,
+      btn.dataset.sheet
+    ));
+  });
 
   container.querySelectorAll('[data-delete-name]').forEach(btn => {
     btn.addEventListener('click', () => _handleDelete(
@@ -172,6 +186,12 @@ function _renderList(containerId, records, defaults, storeKey, sheetName) {
 }
 
 async function _handleDelete(name, storeKey, sheetName) {
+  if (!await epConfirm(
+    `Delete "${name}"? Existing records using this will not be updated.`,
+    'Delete Category',
+    'Delete'
+  )) return;
+
   const records = store.get(storeKey) ?? [];
   const updated = records.filter(r => r.name !== name);
 
@@ -183,9 +203,113 @@ async function _handleDelete(name, storeKey, sheetName) {
   }
 }
 
+async function _handleRename(oldName, storeKey, sheetName) {
+  const newName = await _promptRename(oldName);
+  if (!newName || newName === oldName) return;
+  const normNew = _norm(newName);
+
+  const existing = store.get(storeKey) ?? [];
+  if (existing.some(r => _norm(r.name) === normNew)) {
+    alert(`"${newName}" already exists.`);
+    return;
+  }
+
+  const updated = existing.map(r => r.name === oldName ? { ...r, name: newName } : r);
+  try {
+    await writeAllRows(sheetName, updated.map(r => [r.name]));
+    store.set(storeKey, updated);
+    if (storeKey === 'expenseCategories')  await _propagateExpenseCategoryRename(oldName, newName);
+    else if (storeKey === 'incomeSources')       await _propagateIncomeSourceRename(oldName, newName);
+    else if (storeKey === 'vehicleExpenseTypes')  await _propagateVehicleExpenseTypeRename(oldName, newName);
+  } catch (err) {
+    alert(err.message ?? 'Failed to rename. Please try again.');
+  }
+}
+
+function _promptRename(currentName) {
+  return new Promise(resolve => {
+    const modalEl = document.getElementById('cat-rename-modal');
+    if (!modalEl) { resolve(window.prompt('New name:', currentName) ?? null); return; }
+    const input    = document.getElementById('cat-rename-input');
+    const okBtn    = document.getElementById('cat-rename-ok');
+    const cancelBtn = document.getElementById('cat-rename-cancel');
+    if (input) input.value = currentName;
+    const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+    function cleanup() {
+      okBtn.removeEventListener('click', onOk);
+      cancelBtn.removeEventListener('click', onCancel);
+      input?.removeEventListener('keydown', onKeydown);
+      modalEl.removeEventListener('hidden.bs.modal', onCancel);
+    }
+    function onOk() { const val = input?.value?.trim() ?? ''; cleanup(); modal.hide(); resolve(val || null); }
+    function onCancel() { cleanup(); resolve(null); }
+    function onKeydown(e) { if (e.key === 'Enter') { e.preventDefault(); onOk(); } }
+    okBtn.addEventListener('click', onOk);
+    cancelBtn.addEventListener('click', onCancel);
+    input?.addEventListener('keydown', onKeydown);
+    modalEl.addEventListener('hidden.bs.modal', onCancel, { once: true });
+    modal.show();
+    setTimeout(() => input?.select(), 300);
+  });
+}
+
+async function _propagateExpenseCategoryRename(oldName, newName) {
+  const expenses = store.get('expenses') ?? [];
+  const updatedExp = expenses.map(e => e.category === oldName ? { ...e, category: newName } : e);
+  if (updatedExp.some((e, i) => e.category !== expenses[i].category)) {
+    await writeAllRows(CONFIG.sheets.expenses, updatedExp.map(e =>
+      [e.date, e.category, e.subCategory ?? '', String(e.amount), e.description, e.paymentMethod]
+    ));
+    store.set('expenses', updatedExp);
+  }
+  const budgets = store.get('budgets') ?? [];
+  const updatedBudgets = budgets.map(b => b.category === oldName ? { ...b, category: newName } : b);
+  if (updatedBudgets.some((b, i) => b.category !== budgets[i].category)) {
+    await writeAllRows(CONFIG.sheets.budgets, updatedBudgets.map(b =>
+      [b.id, b.category, String(b.monthlyLimit), b.month]
+    ));
+    store.set('budgets', updatedBudgets);
+  }
+  const subs = store.get('subCategories') ?? [];
+  const updatedSubs = subs.map(s => s.category === oldName ? { ...s, category: newName } : s);
+  if (updatedSubs.some((s, i) => s.category !== subs[i].category)) {
+    await writeAllRows(CONFIG.sheets.subCategories, updatedSubs.map(s => [s.category, s.subCategory]));
+    store.set('subCategories', updatedSubs);
+  }
+}
+
+async function _propagateIncomeSourceRename(oldName, newName) {
+  const income = store.get('income') ?? [];
+  const updatedIncome = income.map(r => r.source === oldName ? { ...r, source: newName } : r);
+  if (updatedIncome.some((r, i) => r.source !== income[i].source)) {
+    await writeAllRows(CONFIG.sheets.income, updatedIncome.map(r =>
+      [r.date, r.source, String(r.amount), r.description, r.receivedIn ?? '']
+    ));
+    store.set('income', updatedIncome);
+  }
+}
+
+async function _propagateVehicleExpenseTypeRename(oldName, newName) {
+  const veList = store.get('vehicleExpenses') ?? [];
+  const updatedVe = veList.map(e => e.expenseType === oldName ? { ...e, expenseType: newName } : e);
+  if (updatedVe.some((e, i) => e.expenseType !== veList[i].expenseType)) {
+    await writeAllRows(CONFIG.sheets.vehicleExp, updatedVe.map(e =>
+      [e.id, e.vehicleName ?? '', e.date, e.expenseType ?? '', String(e.amount), e.paymentMethod ?? '', e.description ?? '']
+    ));
+    store.set('vehicleExpenses', updatedVe);
+  }
+}
+
 // ─── Sub-categories ───────────────────────────────────────────────────────────
 
 const SUBCAT_ROW_CHIPS_VISIBLE = 6; // chips per row before +N more
+
+const _DOT_COLORS = ['#6366f1','#10b981','#f59e0b','#ef4444','#3b82f6','#8b5cf6','#ec4899','#14b8a6'];
+function _catDotColor(str) {
+  let h = 0;
+  for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) >>> 0;
+  return _DOT_COLORS[h % _DOT_COLORS.length];
+}
 
 function _renderSubCategories() {
   const container = document.getElementById('subcategories-list');
@@ -231,8 +355,9 @@ function _renderSubCategories() {
             const hidden = subs.length - SUBCAT_ROW_CHIPS_VISIBLE;
             const suggestedKey = suggestionKeyByNorm[_norm(cat)] ?? null;
             const knownSubs = (suggestedKey ? CATEGORY_SUGGESTIONS[suggestedKey] : []).map(s => _norm(s));
+            const dotColor = _catDotColor(cat);
             return `<tr class="sct-row">
-              <td class="sct-td-cat"><span class="sct-cat-dot"></span>${escapeHtml(cat)}</td>
+              <td class="sct-td-cat"><span class="sct-cat-dot" style="background:${dotColor}"></span>${escapeHtml(cat)}</td>
               <td class="sct-td-subs">
                 ${visible.map(sub => {
                   const isKnown = knownSubs.includes(_norm(sub));
@@ -251,6 +376,9 @@ function _renderSubCategories() {
                   : exp && subs.length > SUBCAT_ROW_CHIPS_VISIBLE
                     ? `<button type="button" class="cat-tag cat-tag-more sct-toggle" data-cat="${escapeHtml(cat)}">Show less</button>`
                     : ''}
+                <button type="button" class="sct-add-sub-btn" data-cat="${escapeHtml(cat)}" title="Add sub-category">
+                  <i class="bi bi-plus-circle me-1"></i>Add
+                </button>
               </td>
               <td class="sct-td-count"><span class="subcat-card-count">${subs.length}</span></td>
             </tr>`;
@@ -269,6 +397,17 @@ function _renderSubCategories() {
     btn.addEventListener('click', () => {
       container._expandedMap[btn.dataset.cat] = !container._expandedMap[btn.dataset.cat];
       _renderSubCategories();
+    });
+  });
+
+  container.querySelectorAll('.sct-add-sub-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const cat = btn.dataset.cat;
+      const parentSelect = document.getElementById('subcategory-parent');
+      const nameInput    = document.getElementById('new-subcategory-name');
+      if (parentSelect) parentSelect.value = cat;
+      document.getElementById('subcategory-form')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      setTimeout(() => nameInput?.focus(), 300);
     });
   });
 }
@@ -300,8 +439,10 @@ function _extractMainTerm(description) {
 
   if (words.length === 0) return null;
 
-  const term = words[0];
-  return term.charAt(0).toUpperCase() + term.slice(1);
+  const termWords = words.slice(0, 2);
+  const term = termWords[0].charAt(0).toUpperCase() + termWords[0].slice(1) +
+    (termWords.length > 1 ? ' ' + termWords[1] : '');
+  return term;
 }
 
 function _getSmartExpenseSuggestions() {
@@ -422,6 +563,20 @@ async function _quickAddFromExpense(btn) {
 
 // ─── Suggestions panel ───────────────────────────────────────────────────────
 
+function _getCategoryUsageStats() {
+  const expenses = store.get('expenses') ?? [];
+  const cutoff   = new Date();
+  cutoff.setDate(cutoff.getDate() - 90);
+  const stats = {};
+  expenses.forEach(e => {
+    if (!e.category) return;
+    if (!stats[e.category]) stats[e.category] = { total: 0, recent: 0 };
+    stats[e.category].total++;
+    if (e.date && new Date(e.date) >= cutoff) stats[e.category].recent++;
+  });
+  return stats;
+}
+
 function _renderSuggestions() {
   const container = document.getElementById('cat-suggestions-panel');
   if (!container) return;
@@ -432,8 +587,8 @@ function _renderSuggestions() {
     ? [...DEFAULT_EXPENSE_CATEGORIES]
     : expenseCategoryRecords.map(r => r.name).filter(Boolean);
 
-  const existingCats = new Set(activeParents.map(c => _norm(c)));
-  const suggestionKeys = Object.keys(CATEGORY_SUGGESTIONS);
+  const existingCats    = new Set(activeParents.map(c => _norm(c)));
+  const suggestionKeys  = Object.keys(CATEGORY_SUGGESTIONS);
   const suggestionKeyByNorm = suggestionKeys.reduce((acc, key) => {
     acc[_norm(key)] = key;
     return acc;
@@ -448,17 +603,18 @@ function _renderSuggestions() {
     existingSubMap[catKey].add(_norm(r.subCategory));
   });
 
-  // 1. Suggested parent categories not yet added
-  const defaultSet = new Set(DEFAULT_EXPENSE_CATEGORIES.map(d => _norm(d)));
+  // ── Get category usage from real expenses ──
+  const usageStats = _getCategoryUsageStats();
+
+  // ── Suggested parent categories not yet added ──
+  const defaultSet    = new Set(DEFAULT_EXPENSE_CATEGORIES.map(d => _norm(d)));
   const missingParents = usingDefaults
     ? suggestionKeys.filter(p => !defaultSet.has(_norm(p)))
     : suggestionKeys.filter(p => !existingCats.has(_norm(p)));
 
-  // 2. Suggested sub-categories per existing parent
-  const allParents = activeParents;
-
+  // ── Sub-category sections sorted by actual usage frequency ──
   const subSections = [];
-  allParents.forEach(cat => {
+  activeParents.forEach(cat => {
     const suggestedKey = suggestionKeyByNorm[_norm(cat)];
     if (!suggestedKey) return;
     const alreadyAdded = existingSubMap[_norm(cat)] ?? new Set();
@@ -469,8 +625,24 @@ function _renderSuggestions() {
       seen.add(key);
       return true;
     });
-    if (missing.length > 0) subSections.push({ cat, missing });
+    if (missing.length > 0) {
+      const usage = usageStats[cat] ?? { total: 0, recent: 0 };
+      subSections.push({ cat, missing, total: usage.total, recent: usage.recent });
+    }
   });
+
+  // Sort: categories with real spending appear first (recent > total > alphabetical)
+  subSections.sort((a, b) => {
+    if (b.recent !== a.recent) return b.recent - a.recent;
+    if (b.total  !== a.total)  return b.total  - a.total;
+    return a.cat.localeCompare(b.cat);
+  });
+
+  // ── Top picks: first 3 categories the user actually spends in ──
+  const topPicks   = subSections.filter(s => s.total > 0).slice(0, 3);
+  const otherSubs  = subSections.filter(s => !topPicks.includes(s));
+  const unusedSubs = otherSubs.filter(s => s.total === 0);
+  const usedOther  = otherSubs.filter(s => s.total > 0);
 
   const hasAnything = missingParents.length > 0 || subSections.length > 0;
   if (!hasAnything) {
@@ -480,23 +652,46 @@ function _renderSuggestions() {
 
   let html = '';
 
-  if (missingParents.length > 0) {
-    html += `<div class="mb-3">
-      <div class="sug-section-label"><i class="bi bi-tag-fill me-1"></i>Suggested Parent Categories</div>
-      <div class="d-flex flex-wrap gap-1 mt-1">
-        ${missingParents.map(p =>
-          `<button class="cat-sug-chip" data-sug-type="parent" data-sug-name="${escapeHtml(p)}">
-            <i class="bi bi-plus-circle me-1"></i>${escapeHtml(p)}
-          </button>`
-        ).join('')}
-      </div>
+  // ── Section 1: Top picks for you (based on actual spending) ──
+  if (topPicks.length > 0) {
+    html += `<div class="sug-dynamic-header">
+      <i class="bi bi-fire me-1" style="color:#f97316"></i>
+      <strong>Top picks for you</strong>
+      <span class="sug-dynamic-hint">based on your ${subSections.filter(s=>s.total>0).length > 0 ? 'recent spending' : 'categories'}</span>
     </div>`;
+    html += topPicks.map(({ cat, missing, total, recent }) => {
+      const hint = recent > 0 ? `${recent} expense${recent > 1 ? 's' : ''} in last 90 days`
+                 : total  > 0 ? `${total} expense${total > 1 ? 's' : ''} total`
+                 : '';
+      return `
+      <div class="mb-2 sug-top-section">
+        <div class="sug-section-label">
+          <i class="bi bi-diagram-2 me-1"></i>${escapeHtml(cat)}
+          ${hint ? `<span class="sug-usage-hint">${hint}</span>` : ''}
+        </div>
+        <div class="d-flex flex-wrap gap-1 mt-1">
+          ${missing.map(s =>
+            `<button class="cat-sug-chip cat-sug-chip--sub cat-sug-chip--hot" data-sug-type="sub" data-sug-parent="${escapeHtml(cat)}" data-sug-name="${escapeHtml(s)}">
+              <i class="bi bi-plus-circle me-1"></i>${escapeHtml(s)}
+            </button>`
+          ).join('')}
+        </div>
+      </div>`;
+    }).join('');
   }
 
-  if (subSections.length > 0) {
-    html += subSections.map(({ cat, missing }) => `
+  // ── Section 2: Other used categories ──
+  if (usedOther.length > 0) {
+    html += `<div class="sug-dynamic-header mt-2">
+      <i class="bi bi-diagram-2-fill me-1" style="color:#6366f1"></i>
+      <strong>More for your categories</strong>
+    </div>`;
+    html += usedOther.map(({ cat, missing, total }) => `
       <div class="mb-2">
-        <div class="sug-section-label"><i class="bi bi-diagram-2 me-1"></i>${escapeHtml(cat)}</div>
+        <div class="sug-section-label">
+          <i class="bi bi-diagram-2 me-1"></i>${escapeHtml(cat)}
+          <span class="sug-usage-hint">${total} expense${total !== 1 ? 's' : ''}</span>
+        </div>
         <div class="d-flex flex-wrap gap-1 mt-1">
           ${missing.map(s =>
             `<button class="cat-sug-chip cat-sug-chip--sub" data-sug-type="sub" data-sug-parent="${escapeHtml(cat)}" data-sug-name="${escapeHtml(s)}">
@@ -508,6 +703,47 @@ function _renderSuggestions() {
     ).join('');
   }
 
+  // ── Section 3: Suggested parent categories ──
+  if (missingParents.length > 0) {
+    html += `<div class="sug-dynamic-header mt-2">
+      <i class="bi bi-tag-fill me-1" style="color:#10b981"></i>
+      <strong>Suggested parent categories</strong>
+      <span class="sug-dynamic-hint">not in your list yet</span>
+    </div>
+    <div class="d-flex flex-wrap gap-1 mt-1 mb-2">
+      ${missingParents.map(p =>
+        `<button class="cat-sug-chip" data-sug-type="parent" data-sug-name="${escapeHtml(p)}">
+          <i class="bi bi-plus-circle me-1"></i>${escapeHtml(p)}
+        </button>`
+      ).join('')}
+    </div>`;
+  }
+
+  // ── Section 4: Unused categories (collapsed) ──
+  if (unusedSubs.length > 0) {
+    const detailId = 'sug-unused-detail';
+    html += `<details class="sug-unused-details" id="${detailId}">
+      <summary class="sug-unused-summary">
+        <i class="bi bi-chevron-right sug-chevron me-1"></i>
+        ${unusedSubs.length} more default suggestion${unusedSubs.length !== 1 ? 's' : ''} (no spending yet)
+      </summary>
+      <div class="sug-unused-body">
+        ${unusedSubs.map(({ cat, missing }) => `
+          <div class="mb-2">
+            <div class="sug-section-label"><i class="bi bi-diagram-2 me-1"></i>${escapeHtml(cat)}</div>
+            <div class="d-flex flex-wrap gap-1 mt-1">
+              ${missing.map(s =>
+                `<button class="cat-sug-chip cat-sug-chip--sub cat-sug-chip--dim" data-sug-type="sub" data-sug-parent="${escapeHtml(cat)}" data-sug-name="${escapeHtml(s)}">
+                  <i class="bi bi-plus-circle me-1"></i>${escapeHtml(s)}
+                </button>`
+              ).join('')}
+            </div>
+          </div>`
+        ).join('')}
+      </div>
+    </details>`;
+  }
+
   container.innerHTML = html;
 
   container.querySelectorAll('.cat-sug-chip').forEach(btn => {
@@ -517,6 +753,7 @@ function _renderSuggestions() {
 
 async function _quickAddSuggestion(btn) {
   btn.disabled = true;
+  btn.innerHTML = `<i class="bi bi-hourglass-split me-1"></i>${escapeHtml(btn.dataset.sugName ?? '')}`;
   const type   = btn.dataset.sugType;
   const name   = btn.dataset.sugName?.trim() ?? '';
   const parent = btn.dataset.sugParent?.trim() ?? '';
@@ -555,6 +792,12 @@ async function _quickAddSuggestion(btn) {
 }
 
 async function _handleDeleteSubCategory(category, subCategory) {
+  if (!await epConfirm(
+    `Delete "${subCategory}" from "${category}"?`,
+    'Delete Sub-category',
+    'Delete'
+  )) return;
+
   const records = store.get('subCategories') ?? [];
   const updated = records.filter(r => !(r.category === category && r.subCategory === subCategory));
 
@@ -569,18 +812,20 @@ async function _handleDeleteSubCategory(category, subCategory) {
 // ─── init() ──────────────────────────────────────────────────────────────────
 
 export function init() {
-  _bindForm('expense-category-form', 'new-expense-category', 'expenseCategories', CONFIG.sheets.expenseCategories);
-  _bindForm('income-source-form', 'new-income-source', 'incomeSources', CONFIG.sheets.incomeSources);
-  _bindForm('vehicle-expense-type-form', 'new-vehicle-expense-type', 'vehicleExpenseTypes', CONFIG.sheets.vehicleExpenseTypes);
+  _bindForm('expense-category-form', 'new-expense-category', 'expenseCategories', CONFIG.sheets.expenseCategories, DEFAULT_EXPENSE_CATEGORIES);
+  _bindForm('income-source-form', 'new-income-source', 'incomeSources', CONFIG.sheets.incomeSources, DEFAULT_INCOME_SOURCES);
+  _bindForm('vehicle-expense-type-form', 'new-vehicle-expense-type', 'vehicleExpenseTypes', CONFIG.sheets.vehicleExpenseTypes, DEFAULT_VEHICLE_EXPENSE_TYPES);
   _bindSubCategoryForm();
+  _bindResetButtons();
+  _bindCategoryTabs();
   store.on('expenseCategories', render);
   store.on('incomeSources', render);
   store.on('subCategories', render);
   store.on('vehicleExpenseTypes', render);
-  store.on('expenses', _renderSmartExpenseSuggestions);
+  store.on('expenses', () => { _renderSuggestions(); _renderSmartExpenseSuggestions(); });
 }
 
-function _bindForm(formId, inputId, storeKey, sheetName) {
+function _bindForm(formId, inputId, storeKey, sheetName, defaults = []) {
   const form = document.getElementById(formId);
   if (!form) return;
 
@@ -595,8 +840,9 @@ function _bindForm(formId, inputId, storeKey, sheetName) {
     }
     nameInput?.classList.remove('is-invalid');
 
-    const existing = (store.get(storeKey) ?? []).map(r => r.name.toLowerCase());
-    if (existing.includes(name.toLowerCase())) {
+    const existingRecords = store.get(storeKey) ?? [];
+    const existingNames = existingRecords.map(r => r.name.toLowerCase());
+    if (existingNames.includes(name.toLowerCase())) {
       nameInput?.classList.add('is-invalid');
       nameInput?.setCustomValidity('Already exists');
       return;
@@ -604,7 +850,11 @@ function _bindForm(formId, inputId, storeKey, sheetName) {
     nameInput?.setCustomValidity('');
 
     try {
-      await appendRow(sheetName, [name]);
+      if (existingRecords.length === 0 && defaults.length > 0) {
+        await writeAllRows(sheetName, [...defaults.map(d => [d]), [name]]);
+      } else {
+        await appendRow(sheetName, [name]);
+      }
       const rows = await fetchRows(sheetName);
       store.set(storeKey, rows.map(r => ({ name: r[0] ?? '' })).filter(r => r.name));
       form.reset();
@@ -612,6 +862,72 @@ function _bindForm(formId, inputId, storeKey, sheetName) {
       alert(err.message ?? 'Failed to save. Please try again.');
     }
   });
+}
+
+function _bindResetButtons() {
+  document.getElementById('reset-expense-categories-btn')?.addEventListener('click', () =>
+    _handleResetToDefaults('expenseCategories', CONFIG.sheets.expenseCategories, DEFAULT_EXPENSE_CATEGORIES)
+  );
+  document.getElementById('reset-income-sources-btn')?.addEventListener('click', () =>
+    _handleResetToDefaults('incomeSources', CONFIG.sheets.incomeSources, DEFAULT_INCOME_SOURCES)
+  );
+  document.getElementById('reset-vehicle-expense-types-btn')?.addEventListener('click', () =>
+    _handleResetToDefaults('vehicleExpenseTypes', CONFIG.sheets.vehicleExpenseTypes, DEFAULT_VEHICLE_EXPENSE_TYPES)
+  );
+}
+
+function _bindCategoryTabs() {
+  const tabs   = document.querySelectorAll('.cat-tab-btn');
+  const panels = document.querySelectorAll('.cat-panel');
+  tabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      const target = tab.dataset.catTab;
+      tabs.forEach(t => t.classList.remove('active'));
+      panels.forEach(p => p.classList.add('d-none'));
+      tab.classList.add('active');
+      document.getElementById(`cat-panel-${target}`)?.classList.remove('d-none');
+    });
+  });
+}
+
+function _updateTabCounts() {
+  const expCats    = getExpenseCategories();
+  const incSources = getIncomeSources();
+  const veTypes    = getVehicleExpenseTypes();
+  const subs       = store.get('subCategories') ?? [];
+
+  const set = (id, n) => { const el = document.getElementById(id); if (el) el.textContent = n; };
+  set('cat-tab-count-expense', expCats.length);
+  set('cat-tab-count-income',  incSources.length);
+  set('cat-tab-count-vehicle', veTypes.length);
+  set('cat-stat-expense', expCats.length);
+  set('cat-stat-income',  incSources.length);
+  set('cat-stat-vehicle', veTypes.length);
+  set('cat-stat-sub',     subs.length);
+  set('subcat-total-badge', subs.length);
+
+  const heroSub = document.getElementById('cat-hero-sub');
+  if (heroSub) {
+    const total = expCats.length + incSources.length + veTypes.length;
+    heroSub.innerHTML = total > 0
+      ? `<strong style="color:rgba(255,255,255,.95);font-weight:700">${total}</strong> categories across ${subs.length} sub-categories`
+      : 'Manage expense categories &amp; sources';
+  }
+}
+
+async function _handleResetToDefaults(storeKey, sheetName, defaults) {
+  if (!await epConfirm(
+    'This will replace your current list with the built-in defaults. Are you sure?',
+    'Reset to Defaults',
+    'Reset'
+  )) return;
+  try {
+    await writeAllRows(sheetName, defaults.map(d => [d]));
+    const rows = await fetchRows(sheetName);
+    store.set(storeKey, rows.map(r => ({ name: r[0] ?? '' })).filter(r => r.name));
+  } catch (err) {
+    alert(err.message ?? 'Failed to reset. Please try again.');
+  }
 }
 
 function _bindSubCategoryForm() {

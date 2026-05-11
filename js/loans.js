@@ -7,7 +7,7 @@ import { formatCurrency, formatDate } from './utils.js';
 import { epConfirm } from './confirm.js';
 
 // ─── Serialization ────────────────────────────────────────────────────────────
-// Columns: id | name | type | principal | interestRate | tenureMonths | startDate | accountRef | notes | status | disbursements | rateChanges | prepayments
+// Columns: id | name | type | principal | interestRate | tenureMonths | startDate | accountRef | notes | status | disbursements | rateChanges | prepayments | paidEmis
 
 export function serialize(r) {
   return [
@@ -24,6 +24,7 @@ export function serialize(r) {
     JSON.stringify(r.disbursements ?? []),
     JSON.stringify(r.rateChanges   ?? []),
     JSON.stringify(r.prepayments   ?? []),
+    JSON.stringify(r.paidEmis      ?? []),
   ];
 }
 
@@ -46,6 +47,7 @@ export function deserialize(row) {
     disbursements: _safeParse(row[10]),
     rateChanges:   _safeParse(row[11]),
     prepayments:   _safeParse(row[12]),
+    paidEmis:      _safeParse(row[13]),
   };
 }
 
@@ -166,18 +168,24 @@ function _monthsElapsed(startDate) {
 
 function _getLoanStats(loan) {
   const schedule      = calcAmortizationFull(loan);
+  const paidSet       = new Set((loan.paidEmis ?? []).map(Number));
+  const paidMonths    = paidSet.size;
+  // For outstanding balance, find the last consecutively paid EMI
   const elapsed       = _monthsElapsed(loan.startDate);
-  const paidMonths    = Math.min(elapsed, schedule.length);
-  const paid          = schedule.slice(0, paidMonths);
+  const lastPaid      = Math.max(0, ...([...paidSet]));
+  const paid          = schedule.filter(r => paidSet.has(r.month));
   const principalPaid = paid.reduce((s, r) => s + r.principal, 0);
   const interestPaid  = paid.reduce((s, r) => s + r.interest,  0);
-  const emi           = schedule[paidMonths]?.emi ?? schedule[schedule.length - 1]?.emi ?? calcEmi(loan.principal, loan.interestRate, loan.tenureMonths);
-  const outstanding   = schedule[paidMonths - 1]?.balance ?? (paidMonths === 0 ? loan.principal : 0);
+  const nextUnpaid    = schedule.find(r => !paidSet.has(r.month));
+  const emi           = nextUnpaid?.emi ?? schedule[schedule.length - 1]?.emi ?? calcEmi(loan.principal, loan.interestRate, loan.tenureMonths);
+  const outstanding   = lastPaid > 0 ? (schedule.find(r => r.month === lastPaid)?.balance ?? loan.principal) : loan.principal;
   const remaining     = schedule.length - paidMonths;
   const totalInterest = schedule.reduce((s, r) => s + r.interest, 0);
   const progress      = schedule.length > 0 ? (paidMonths / schedule.length) * 100 : 0;
   const payoffDate    = schedule.length > 0 ? schedule[schedule.length - 1].date : '';
-  return { emi, paidMonths, principalPaid, interestPaid, outstanding, remaining, totalInterest, progress, payoffDate };
+  // Missed = past EMIs (based on elapsed time) that are not in paidEmis
+  const missedCount   = schedule.filter(r => r.month <= elapsed && !paidSet.has(r.month)).length;
+  return { emi, paidMonths, principalPaid, interestPaid, outstanding, remaining, totalInterest, progress, payoffDate, missedCount, paidSet, elapsed };
 }
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────
@@ -210,7 +218,7 @@ const TYPE_COLORS = {
 
 export function render() {
   const all    = store.get('loans') ?? [];
-  const active = all.filter(l => l.status === 'active');
+  const active = all.filter(l => (l.status ?? '').toLowerCase() === 'active');
   const search  = _loanFilter.search.toLowerCase();
   const typeF   = _loanFilter.type;
   const statusF = _loanFilter.status;
@@ -218,7 +226,7 @@ export function render() {
   const filtered = all.filter(l =>
     (!search  || l.name.toLowerCase().includes(search) || (l.accountRef ?? '').toLowerCase().includes(search)) &&
     (!typeF   || l.type   === typeF) &&
-    (!statusF || l.status === statusF)
+    (!statusF || (l.status ?? '').toLowerCase() === statusF.toLowerCase())
   );
 
   const activeStats       = active.map(l => _getLoanStats(l));
@@ -272,12 +280,12 @@ export function render() {
     return;
   }
 
-  const activeFiltered = filtered.filter(l => l.status !== 'closed');
-  const closedFiltered = filtered.filter(l => l.status === 'closed');
+  const activeFiltered = filtered.filter(l => (l.status ?? '').toLowerCase() !== 'closed');
+  const closedFiltered = filtered.filter(l => (l.status ?? '').toLowerCase() === 'closed');
   const sorted = [...activeFiltered, ...closedFiltered];
 
   let html = sorted.map((loan, idx) => {
-    const isFirstClosed = loan.status === 'closed' && (idx === 0 || sorted[idx - 1].status !== 'closed');
+    const isFirstClosed = (loan.status ?? '').toLowerCase() === 'closed' && (idx === 0 || (sorted[idx - 1].status ?? '').toLowerCase() !== 'closed');
     const divider = isFirstClosed && activeFiltered.length > 0
       ? `<div class="loan-section-divider"><span>Closed Loans</span><span class="loan-section-divider-count">${closedFiltered.length}</span></div>`
       : '';
@@ -378,7 +386,10 @@ function _renderCard(loan) {
     <div class="loan-progress-wrap">
       <div class="d-flex justify-content-between align-items-center mb-1">
         <span style="font-size:.72rem;color:#64748b">${stats.paidMonths} of ${stats.paidMonths + stats.remaining} EMIs paid</span>
-        <span style="font-size:.72rem;font-weight:600;color:${pColor}">${stats.progress.toFixed(0)}%</span>
+        <div class="d-flex align-items-center gap-2">
+          ${stats.missedCount > 0 ? `<span class="loan-missed-badge"><i class="bi bi-exclamation-circle-fill me-1"></i>${stats.missedCount} missed</span>` : ''}
+          <span style="font-size:.72rem;font-weight:600;color:${pColor}">${stats.progress.toFixed(0)}%</span>
+        </div>
       </div>
       <div class="loan-progress-bar-bg">
         <div class="loan-progress-bar-fill" style="width:${stats.progress.toFixed(1)}%;background:${pColor}"></div>
@@ -410,6 +421,29 @@ function _renderCard(loan) {
   </div>`;
 }
 
+// ─── EMI Payment Toggle ────────────────────────────────────────────────────────
+
+async function _toggleEmiPaid(loanId, monthNum) {
+  const all  = store.get('loans') ?? [];
+  const loan = all.find(l => l.id === loanId);
+  if (!loan) return;
+  const paidSet = new Set((loan.paidEmis ?? []).map(Number));
+  if (paidSet.has(monthNum)) {
+    paidSet.delete(monthNum);
+  } else {
+    paidSet.add(monthNum);
+  }
+  const updated = all.map(l => l.id === loanId ? { ...l, paidEmis: [...paidSet].sort((a, b) => a - b) } : l);
+  try {
+    await writeAllRows(CONFIG.sheets.loans, updated.map(serialize));
+    store.set('loans', updated);
+    // Refresh schedule table in-place
+    _showSchedule(loanId);
+  } catch (err) {
+    _showError(err.message || 'Failed to update EMI status.');
+  }
+}
+
 // ─── Schedule modal ───────────────────────────────────────────────────────────
 
 function _showSchedule(id) {
@@ -421,23 +455,62 @@ function _showSchedule(id) {
   const totalPayable = schedule.reduce((s, r) => s + r.emi, 0)
     + (loan.prepayments ?? []).reduce((s, p) => s + Number(p.amount), 0);
 
+  const today    = new Date();
+  const todayYM  = today.getFullYear() * 12 + today.getMonth();
+
   const body = document.getElementById('loan-schedule-body');
   if (body) {
     body.innerHTML = schedule.map(row => {
+      const rowDate  = new Date(row.date);
+      const rowYM    = rowDate.getFullYear() * 12 + rowDate.getMonth();
+      const isPaid   = stats.paidSet.has(row.month);
+      const isPast   = rowYM < todayYM;
+      const isCurrent= rowYM === todayYM;
+      const isMissed = isPast && !isPaid;
+      const isDue    = isCurrent && !isPaid;
+
+      let rowClass = '';
+      let statusBadge = '';
+      if (isPaid) {
+        rowClass = 'loan-row-paid';
+        statusBadge = `<span class="emi-status emi-status--paid"><i class="bi bi-check-circle-fill"></i> Paid</span>`;
+      } else if (isMissed) {
+        rowClass = 'loan-row-missed';
+        statusBadge = `<span class="emi-status emi-status--missed"><i class="bi bi-exclamation-circle-fill"></i> Missed</span>`;
+      } else if (isDue) {
+        rowClass = 'loan-row-due';
+        statusBadge = `<span class="emi-status emi-status--due"><i class="bi bi-clock-fill"></i> Due Now</span>`;
+      } else {
+        statusBadge = `<span class="emi-status emi-status--upcoming"><i class="bi bi-calendar3"></i> Upcoming</span>`;
+      }
+
       const events = [];
       if (row.disbursed)    events.push(`<span class="badge bg-info-subtle text-info ms-1">+${formatCurrency(row.disbursed)} disbursed</span>`);
       if (row.rateChanged !== null) events.push(`<span class="badge bg-warning-subtle text-warning ms-1">${row.rateChanged}% rate</span>`);
       if (row.prepaid)      events.push(`<span class="badge bg-success-subtle text-success ms-1">${formatCurrency(row.prepaid)} prepaid</span>`);
+
+      const btnLabel = isPaid ? '<i class="bi bi-x-circle"></i> Unmark' : '<i class="bi bi-check2"></i> Mark Paid';
+      const btnCls   = isPaid ? 'btn-outline-secondary' : (isMissed ? 'btn-outline-danger' : 'btn-outline-success');
+
       return `
-      <tr${row.month <= stats.paidMonths ? ' class="loan-row-paid"' : ''}>
+      <tr class="${rowClass}" data-emi-month="${row.month}">
         <td>${row.month}</td>
         <td>${formatDate(row.date)}${events.join('')}</td>
         <td>${formatCurrency(row.emi)}</td>
         <td>${formatCurrency(row.principal)}</td>
         <td>${formatCurrency(row.interest)}</td>
         <td>${formatCurrency(row.balance)}</td>
+        <td>${statusBadge}</td>
+        <td>
+          <button class="btn btn-xs ${btnCls} emi-mark-btn" data-loan-id="${esc(id)}" data-month="${row.month}">${btnLabel}</button>
+        </td>
       </tr>`;
     }).join('');
+
+    // Bind mark-paid buttons
+    body.querySelectorAll('.emi-mark-btn').forEach(btn => {
+      btn.addEventListener('click', () => _toggleEmiPaid(btn.dataset.loanId, Number(btn.dataset.month)));
+    });
   }
 
   const title = document.getElementById('loan-schedule-title');
@@ -445,11 +518,15 @@ function _showSchedule(id) {
 
   const summary = document.getElementById('loan-schedule-summary');
   if (summary) {
+    const missedHtml = stats.missedCount > 0
+      ? `<span style="color:#ef4444"><i class="bi bi-exclamation-circle-fill me-1"></i>Missed: <strong>${stats.missedCount}</strong></span>`
+      : `<span style="color:#10b981"><i class="bi bi-check-circle-fill me-1"></i>No missed EMIs</span>`;
     summary.innerHTML = `
       <span><i class="bi bi-calendar3 me-1"></i>EMI: <strong>${formatCurrency(Math.round(stats.emi))}/mo</strong></span>
       <span><i class="bi bi-bank2 me-1"></i>Total Interest: <strong>${formatCurrency(Math.round(totalInt))}</strong></span>
       <span><i class="bi bi-cash-stack me-1"></i>Total Payable: <strong>${formatCurrency(Math.round(totalPayable))}</strong></span>
-      <span><i class="bi bi-check-circle me-1 text-success"></i>Paid EMIs: <strong>${stats.paidMonths} / ${schedule.length}</strong></span>`;
+      <span><i class="bi bi-check-circle me-1 text-success"></i>Paid: <strong>${stats.paidMonths} / ${schedule.length}</strong></span>
+      ${missedHtml}`;
   }
 
   const modal = document.getElementById('oc-loan-schedule');
@@ -776,6 +853,49 @@ function _updateResetBtn() {
   btn.classList.toggle('d-none', !active);
 }
 
+// ─── Auto-mark past EMIs as paid ──────────────────────────────────────────────
+
+async function _autoMarkDueEmis() {
+  const all = store.get('loans') ?? [];
+  if (!all.length) return;
+
+  const today  = new Date();
+  // Strictly past = before the current month (current month stays as "Due Now")
+  const cutoffYM = today.getFullYear() * 12 + today.getMonth();
+
+  let anyChanged = false;
+  const updated = all.map(loan => {
+    if (loan.status === 'closed') return loan;
+    const schedule = calcAmortizationFull(loan);
+    const paidSet  = new Set((loan.paidEmis ?? []).map(Number));
+    let changed = false;
+
+    schedule.forEach(row => {
+      const d    = new Date(row.date);
+      const rowYM = d.getFullYear() * 12 + d.getMonth();
+      if (rowYM < cutoffYM && !paidSet.has(row.month)) {
+        paidSet.add(row.month);
+        changed = true;
+      }
+    });
+
+    if (changed) {
+      anyChanged = true;
+      return { ...loan, paidEmis: [...paidSet].sort((a, b) => a - b) };
+    }
+    return loan;
+  });
+
+  if (anyChanged) {
+    try {
+      await writeAllRows(CONFIG.sheets.loans, updated.map(serialize));
+      store.set('loans', updated);
+    } catch {
+      // Silent — auto-mark is best-effort
+    }
+  }
+}
+
 // ─── Exports ──────────────────────────────────────────────────────────────────
 
 export function initLoans() {
@@ -784,6 +904,7 @@ export function initLoans() {
   store.on('loans', render);
 }
 
-export function renderLoans() {
+export async function renderLoans() {
+  await _autoMarkDueEmis();
   render();
 }

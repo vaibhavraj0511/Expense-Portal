@@ -37,5 +37,6 @@ export const CONFIG = {
     settings:             'Settings',
     trips:                'Trips',
     tripExpenses:         'TripExpenses',
+    vault:                'Vault',
   },
 };

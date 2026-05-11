@@ -91,7 +91,7 @@ function _monthlyCost(sub) {
 
 export function render() {
   const all    = store.get('subscriptions') ?? [];
-  const active = all.filter(s => s.active !== false);
+  const active = all.filter(s => s.active !== false && (s.active !== 'false'));
 
   // Stat cards
   const monthlyTotal = active.reduce((s, sub) => s + _monthlyCost(sub), 0);

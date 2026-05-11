@@ -32,8 +32,9 @@ export function serializeVehicleDoc(r) { return [r.vehicleName, r.insuranceExpir
 export function deserializeVehicleDoc(row) { return { vehicleName: row[0]??'', insuranceExpiry: row[1]??'', rcExpiry: row[2]??'' }; }
 
 function escapeHtml(str) { return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-function showError(id, msg) { const el = document.getElementById(id); if (el) { el.textContent = msg; el.classList.remove('d-none'); } }
-function hideError(id) { const el = document.getElementById(id); if (el) el.classList.add('d-none'); }
+const _ERR_REDIRECT = { 'trip-log-error-banner': 'vehicle-error-banner', 'vehicle-expense-error-banner': 'vehicle-error-banner' };
+function showError(id, msg) { const el = document.getElementById(_ERR_REDIRECT[id] ?? id); if (el) { el.textContent = msg; el.classList.remove('d-none'); } }
+function hideError(id) { const el = document.getElementById(_ERR_REDIRECT[id] ?? id); if (el) el.classList.add('d-none'); }
 function _getSelectedVehicle() { return document.getElementById('vehicle-filter-select')?.value ?? ''; }
 
 function _calculateAllTimeAvg(vehicleName) {
@@ -316,6 +317,20 @@ export function render() {
   now.setHours(0, 0, 0, 0);
   const curYM = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
 
+  // Hero subtitle
+  const heroSub = el('veh-hero-sub');
+  if (heroSub) {
+    const parts = [];
+    if (vehicles.length > 0) parts.push(`<strong style="color:rgba(255,255,255,.95);font-weight:700">${vehicles.length}</strong> vehicle${vehicles.length !== 1 ? 's' : ''}`);
+    if (trips.length > 0)    parts.push(`<strong style="color:rgba(255,255,255,.95);font-weight:700">${trips.length}</strong> trip${trips.length !== 1 ? 's' : ''}`);
+    const monthCost = veExps.filter(e => String(e.date ?? '').startsWith(curYM)).reduce((s, e) => s + (Number(e.amount) || 0), 0);
+    if (monthCost > 0)       parts.push(`${formatCurrency(Math.round(monthCost))} this month`);
+    heroSub.innerHTML = parts.length ? parts.join(' · ') : 'Track fuel, trips &amp; maintenance';
+  }
+
+  // Total Trips stat card
+  if (el('veh-stat-trips')) el('veh-stat-trips').textContent = trips.length;
+
   // 1. Month's Total Cost (vehicle maintenance expenses only)
   const monthVeExp = veExps.filter(e => String(e.date ?? '').startsWith(curYM)).reduce((s, e) => s + (Number(e.amount) || 0), 0);
   if (el('veh-stat-month-cost')) el('veh-stat-month-cost').textContent = formatCurrency(monthVeExp);
@@ -437,12 +452,16 @@ export function renderVehicleList() {
   }
   if (emptyState) emptyState.classList.add('d-none');
 
+  const countEl = document.getElementById('veh-count');
+  if (countEl) countEl.textContent = vehicles.length || '';
+
   container.innerHTML = vehicles.map(v => {
     const allTimeAvg = _calculateAllTimeAvg(v.name);
+    const ico = VEHICLE_ICONS[v.type] ?? VEHICLE_ICONS.default;
     const avgBadge = allTimeAvg ? `<span class="badge bg-success-subtle text-success-emphasis ms-2" style="font-size:.7rem"><i class="bi bi-speedometer2 me-1"></i>${allTimeAvg} km/L</span>` : '';
     return `
     <div class="vehicle-chip">
-      <span class="vehicle-chip-icon"><i class="bi bi-car-front-fill"></i></span>
+      <span class="vehicle-chip-icon"><i class="bi ${ico}"></i></span>
       <div class="vehicle-chip-info">
         <span class="vehicle-chip-name">${escapeHtml(v.name)}${avgBadge}</span>
         <span class="vehicle-chip-meta">${escapeHtml(v.type)}${v.regNumber ? ' · ' + escapeHtml(v.regNumber) : ''}</span>
@@ -961,6 +980,9 @@ export function renderMaintenance() {
   const records = store.get('maintenance') ?? [];
   const filterVehicle = _getSelectedVehicle();
   const filtered = filterVehicle ? records.filter(r => r.vehicleName === filterVehicle) : records;
+
+  const maintCount = document.getElementById('maint-count');
+  if (maintCount) maintCount.textContent = filtered.length || '';
 
   if (filtered.length === 0) {
     if (emptyState) emptyState.classList.remove('d-none');

@@ -6,6 +6,31 @@ import { calcEmi } from './loans.js';
 let _calYear  = new Date().getFullYear();
 let _calMonth = new Date().getMonth(); // 0-indexed
 
+// ─── Hash-based color for consistent category colors ─────────────────────────────
+function _categoryColor(category) {
+  if (!category) return '#64748b'; // default gray
+  let hash = 0;
+  for (let i = 0; i < category.length; i++) {
+    hash = category.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const hue = Math.abs(hash) % 360;
+  return `hsl(${hue}, 70%, 45%)`;
+}
+
+// ─── Get dominant color for a type based on its first event in the calendar ───────
+function _getTypeColor(type, allMonthEvents, subType = null) {
+  let typeEvents = Object.values(allMonthEvents).flat().filter(e => e.type === type);
+  if (subType) {
+    typeEvents = typeEvents.filter(e => e.subType === subType);
+  }
+  if (typeEvents.length === 0) {
+    // Fallback colors for types with no events
+    const fallbacks = { bill: '#ef4444', subscription: '#8b5cf6', loan: '#3b82f6', recurring: '#f59e0b' };
+    return fallbacks[type] || '#64748b';
+  }
+  return typeEvents[0].color;
+}
+
 // ─── Active type filters (true = visible) ─────────────────────────────────────
 const _filters = {
   bill:             true,
@@ -61,17 +86,18 @@ function _getEventsForMonth(year, month) {
   bills.filter(b => b.active).forEach(b => {
     const d = Number(b.dueDay);
     if (!d) return;
+    const color = '#f97316'; // fixed orange for bills
     if (b.frequency === 'monthly') {
-      addEvent(d, { type: 'bill', label: b.name, amount: b.amount, icon: 'bi-receipt', color: '#ef4444' });
+      addEvent(d, { type: 'bill', label: b.name, amount: b.amount, icon: 'bi-receipt', color });
     } else if (b.frequency === 'yearly') {
       const billMonth = b.dueMonth ? Number(b.dueMonth) - 1 : 0;
       if (billMonth === month) {
-        addEvent(d, { type: 'bill', label: b.name, amount: b.amount, icon: 'bi-receipt', color: '#ef4444' });
+        addEvent(d, { type: 'bill', label: b.name, amount: b.amount, icon: 'bi-receipt', color });
       }
     } else if (b.frequency === 'quarterly') {
       const startMonth = b.dueMonth ? Number(b.dueMonth) - 1 : 0;
       if ((month - startMonth + 12) % 3 === 0) {
-        addEvent(d, { type: 'bill', label: b.name, amount: b.amount, icon: 'bi-receipt', color: '#ef4444' });
+        addEvent(d, { type: 'bill', label: b.name, amount: b.amount, icon: 'bi-receipt', color });
       }
     }
   });
@@ -81,10 +107,11 @@ function _getEventsForMonth(year, month) {
   subs.filter(s => s.active !== false && s.nextBillingDate).forEach(s => {
     const next = new Date(s.nextBillingDate + 'T00:00:00');
     if (isNaN(next)) return;
+    const color = '#8b5cf6'; // fixed purple for subscriptions
 
     if (s.billingCycle === 'monthly') {
       // Monthly always recurs: use the stored day-of-month for every month
-      addEvent(next.getDate(), { type: 'subscription', label: s.name, amount: s.amount, icon: 'bi-collection-play-fill', color: '#8b5cf6' });
+      addEvent(next.getDate(), { type: 'subscription', label: s.name, amount: s.amount, icon: 'bi-collection-play-fill', color });
     } else {
       // For other cycles, project from nextBillingDate forward until we reach or pass the viewed month
       let projected = new Date(next);
@@ -98,7 +125,7 @@ function _getEventsForMonth(year, month) {
         }
       }
       if (projected.getFullYear() === year && projected.getMonth() === month) {
-        addEvent(projected.getDate(), { type: 'subscription', label: s.name, amount: s.amount, icon: 'bi-collection-play-fill', color: '#8b5cf6' });
+        addEvent(projected.getDate(), { type: 'subscription', label: s.name, amount: s.amount, icon: 'bi-collection-play-fill', color });
       }
     }
   });
@@ -123,7 +150,8 @@ function _getEventsForMonth(year, month) {
   const recurring = store.get('recurring') ?? [];
   recurring.filter(r => !r.paused).forEach(r => {
     const isIncome = r.type === 'income';
-    const color    = isIncome ? '#10b981' : '#f59e0b';
+    // Use fixed colors for recurring (green for income, red for expense)
+    const color    = isIncome ? '#10b981' : '#ef4444';
     const subType  = isIncome ? 'income' : 'expense';
     const icon     = isIncome ? 'bi-arrow-down-circle-fill' : 'bi-arrow-repeat';
 
@@ -234,6 +262,7 @@ function _renderLegend() {
   const legendEl = document.getElementById('fin-cal-legend');
   if (!legendEl) return;
 
+  const allMonthEvents = _getEventsForMonth(_calYear, _calMonth);
   const counts = {
     bill: 0,
     subscription: 0,
@@ -242,17 +271,24 @@ function _renderLegend() {
     recurringExpense: 0,
   };
 
-  Object.values(_getEventsForMonth(_calYear, _calMonth)).flat().forEach(ev => {
+  Object.values(allMonthEvents).flat().forEach(ev => {
     const key = _filterKey(ev);
     counts[key] = (counts[key] ?? 0) + 1;
   });
 
+  // Fixed colors per type — must match calendar event colors
+  const billColor = '#f97316';
+  const subColor = '#8b5cf6';
+  const loanColor = '#3b82f6';
+  const recIncColor = '#10b981';
+  const recExpColor = '#ef4444';
+
   const items = [
-    { key: 'bill',             color: '#ef4444', label: 'Bill' },
-    { key: 'subscription',     color: '#8b5cf6', label: 'Subscription' },
-    { key: 'loan',             color: '#3b82f6', label: 'Loan EMI' },
-    { key: 'recurringIncome',  color: '#10b981', label: 'Recurring Income' },
-    { key: 'recurringExpense', color: '#f59e0b', label: 'Recurring Expense' },
+    { key: 'bill',             color: billColor, label: 'Bill' },
+    { key: 'subscription',     color: subColor, label: 'Subscription' },
+    { key: 'loan',             color: loanColor, label: 'Loan EMI' },
+    { key: 'recurringIncome',  color: recIncColor, label: 'Recurring Income' },
+    { key: 'recurringExpense', color: recExpColor, label: 'Recurring Expense' },
   ];
 
   legendEl.innerHTML = items.map(({ key, color, label }) => {
@@ -295,7 +331,82 @@ export function render() {
   const DAY_NAMES      = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   const MAX_VISIBLE    = 3;
 
-  let html = `<div class="fin-cal-week-strip">`;
+  // ─── Monthly summary KPI cards (rendered first, before calendar) ─────────────
+  const allEvents          = Object.values(allMonthEvents).flat();
+  const totalBills         = allEvents.filter(e => e.type === 'bill').reduce((s, e) => s + (Number(e.amount) || 0), 0);
+  const totalSubs          = allEvents.filter(e => e.type === 'subscription').reduce((s, e) => s + (Number(e.amount) || 0), 0);
+  const totalLoans         = allEvents.filter(e => e.type === 'loan').reduce((s, e) => s + (Number(e.amount) || 0), 0);
+  const totalRecurrIncome  = allEvents.filter(e => e.type === 'recurring' && e.subType === 'income').reduce((s, e) => s + (Number(e.amount) || 0), 0);
+  const totalRecurrExpense = allEvents.filter(e => e.type === 'recurring' && e.subType !== 'income').reduce((s, e) => s + (Number(e.amount) || 0), 0);
+  const totalCommitted     = totalBills + totalSubs + totalLoans + totalRecurrExpense;
+  const netCashFlow        = totalRecurrIncome - totalCommitted;
+  const netClass           = netCashFlow >= 0 ? 'fin-cal-sum-positive' : 'fin-cal-sum-negative';
+  const billCount          = allEvents.filter(e => e.type === 'bill').length;
+  const subCount           = allEvents.filter(e => e.type === 'subscription').length;
+  const loanCount          = allEvents.filter(e => e.type === 'loan').length;
+  const recIncomeCount     = allEvents.filter(e => e.type === 'recurring' && e.subType === 'income').length;
+  const recExpenseCount    = allEvents.filter(e => e.type === 'recurring' && e.subType !== 'income').length;
+
+  // Fixed colors per type — must match calendar event colors above
+  const billColor = '#f97316';
+  const subColor = '#8b5cf6';
+  const loanColor = '#3b82f6';
+  const recIncColor = '#10b981';
+  const recExpColor = '#ef4444';
+
+  let html = `<div class="fin-cal-summary-cards">
+    <div class="fin-cal-stat-card" style="border-left:4px solid ${billColor}">
+      <div class="fin-cal-stat-top" style="color:${billColor}"><i class="bi bi-receipt"></i></div>
+      <div class="fin-cal-stat-body">
+        <div class="fin-cal-stat-label">Bills</div>
+        <div class="fin-cal-stat-value">${fmt(totalBills)}</div>
+        <div class="fin-cal-stat-sub">${billCount} items</div>
+      </div>
+    </div>
+    <div class="fin-cal-stat-card" style="border-left:4px solid ${subColor}">
+      <div class="fin-cal-stat-top" style="color:${subColor}"><i class="bi bi-collection-play-fill"></i></div>
+      <div class="fin-cal-stat-body">
+        <div class="fin-cal-stat-label">Subscriptions</div>
+        <div class="fin-cal-stat-value">${fmt(totalSubs)}</div>
+        <div class="fin-cal-stat-sub">${subCount} items</div>
+      </div>
+    </div>
+    <div class="fin-cal-stat-card" style="border-left:4px solid ${loanColor}">
+      <div class="fin-cal-stat-top" style="color:${loanColor}"><i class="bi bi-bank2"></i></div>
+      <div class="fin-cal-stat-body">
+        <div class="fin-cal-stat-label">Loan EMIs</div>
+        <div class="fin-cal-stat-value">${fmt(totalLoans)}</div>
+        <div class="fin-cal-stat-sub">${loanCount} items</div>
+      </div>
+    </div>
+    <div class="fin-cal-stat-card" style="border-left:4px solid ${recIncColor}">
+      <div class="fin-cal-stat-top" style="color:${recIncColor}"><i class="bi bi-arrow-down-circle-fill"></i></div>
+      <div class="fin-cal-stat-body">
+        <div class="fin-cal-stat-label">Recurring Income</div>
+        <div class="fin-cal-stat-value">${fmt(totalRecurrIncome)}</div>
+        <div class="fin-cal-stat-sub">${recIncomeCount} items</div>
+      </div>
+    </div>
+    <div class="fin-cal-stat-card" style="border-left:4px solid ${recExpColor}">
+      <div class="fin-cal-stat-top" style="color:${recExpColor}"><i class="bi bi-arrow-repeat"></i></div>
+      <div class="fin-cal-stat-body">
+        <div class="fin-cal-stat-label">Recurring Expense</div>
+        <div class="fin-cal-stat-value">${fmt(totalRecurrExpense)}</div>
+        <div class="fin-cal-stat-sub">${recExpenseCount} items</div>
+      </div>
+    </div>
+    <div class="fin-cal-stat-card fin-cal-stat-card-accent ${netClass}">
+      <div class="fin-cal-stat-top"><i class="bi bi-activity"></i></div>
+      <div class="fin-cal-stat-body">
+        <div class="fin-cal-stat-label">Net Cash Flow</div>
+        <div class="fin-cal-stat-value">${fmt(netCashFlow)}</div>
+        <div class="fin-cal-stat-sub">Committed: ${fmt(totalCommitted)}</div>
+      </div>
+    </div>
+  </div>`;
+
+  // ─── Calendar grid ─────────────────────────────────────────────────────────────
+  html += `<div class="fin-cal-week-strip">`;
 
   DAY_NAMES.forEach(d => { html += `<div class="fin-cal-header">${d}</div>`; });
 
@@ -346,74 +457,6 @@ export function render() {
   }
 
   html += `</div>`;
-
-  // ─── Monthly summary footer ────────────────────────────────────────────────
-  const allEvents          = Object.values(allMonthEvents).flat();
-  const totalBills         = allEvents.filter(e => e.type === 'bill').reduce((s, e) => s + (Number(e.amount) || 0), 0);
-  const totalSubs          = allEvents.filter(e => e.type === 'subscription').reduce((s, e) => s + (Number(e.amount) || 0), 0);
-  const totalLoans         = allEvents.filter(e => e.type === 'loan').reduce((s, e) => s + (Number(e.amount) || 0), 0);
-  // FIX: separate recurring income and expense totals
-  const totalRecurrIncome  = allEvents.filter(e => e.type === 'recurring' && e.subType === 'income').reduce((s, e) => s + (Number(e.amount) || 0), 0);
-  const totalRecurrExpense = allEvents.filter(e => e.type === 'recurring' && e.subType !== 'income').reduce((s, e) => s + (Number(e.amount) || 0), 0);
-  const totalCommitted     = totalBills + totalSubs + totalLoans + totalRecurrExpense;
-  const netCashFlow        = totalRecurrIncome - totalCommitted;
-  const netClass           = netCashFlow >= 0 ? 'fin-cal-sum-positive' : 'fin-cal-sum-negative';
-  const billCount          = allEvents.filter(e => e.type === 'bill').length;
-  const subCount           = allEvents.filter(e => e.type === 'subscription').length;
-  const loanCount          = allEvents.filter(e => e.type === 'loan').length;
-  const recIncomeCount     = allEvents.filter(e => e.type === 'recurring' && e.subType === 'income').length;
-  const recExpenseCount    = allEvents.filter(e => e.type === 'recurring' && e.subType !== 'income').length;
-
-  html += `<div class="fin-cal-summary-cards">
-    <div class="fin-cal-stat-card fin-cal-stat-card--bill">
-      <div class="fin-cal-stat-top"><i class="bi bi-receipt"></i></div>
-      <div class="fin-cal-stat-body">
-        <div class="fin-cal-stat-label">Bills</div>
-        <div class="fin-cal-stat-value">${fmt(totalBills)}</div>
-        <div class="fin-cal-stat-sub">${billCount} items</div>
-      </div>
-    </div>
-    <div class="fin-cal-stat-card fin-cal-stat-card--sub">
-      <div class="fin-cal-stat-top"><i class="bi bi-collection-play-fill"></i></div>
-      <div class="fin-cal-stat-body">
-        <div class="fin-cal-stat-label">Subscriptions</div>
-        <div class="fin-cal-stat-value">${fmt(totalSubs)}</div>
-        <div class="fin-cal-stat-sub">${subCount} items</div>
-      </div>
-    </div>
-    <div class="fin-cal-stat-card fin-cal-stat-card--loan">
-      <div class="fin-cal-stat-top"><i class="bi bi-bank2"></i></div>
-      <div class="fin-cal-stat-body">
-        <div class="fin-cal-stat-label">Loan EMIs</div>
-        <div class="fin-cal-stat-value">${fmt(totalLoans)}</div>
-        <div class="fin-cal-stat-sub">${loanCount} items</div>
-      </div>
-    </div>
-    <div class="fin-cal-stat-card fin-cal-stat-card--inc">
-      <div class="fin-cal-stat-top"><i class="bi bi-arrow-down-circle-fill"></i></div>
-      <div class="fin-cal-stat-body">
-        <div class="fin-cal-stat-label">Recurring Income</div>
-        <div class="fin-cal-stat-value">${fmt(totalRecurrIncome)}</div>
-        <div class="fin-cal-stat-sub">${recIncomeCount} items</div>
-      </div>
-    </div>
-    <div class="fin-cal-stat-card fin-cal-stat-card--exp">
-      <div class="fin-cal-stat-top"><i class="bi bi-arrow-repeat"></i></div>
-      <div class="fin-cal-stat-body">
-        <div class="fin-cal-stat-label">Recurring Expense</div>
-        <div class="fin-cal-stat-value">${fmt(totalRecurrExpense)}</div>
-        <div class="fin-cal-stat-sub">${recExpenseCount} items</div>
-      </div>
-    </div>
-    <div class="fin-cal-stat-card fin-cal-stat-card-accent ${netClass}">
-      <div class="fin-cal-stat-top"><i class="bi bi-activity"></i></div>
-      <div class="fin-cal-stat-body">
-        <div class="fin-cal-stat-label">Net Cash Flow</div>
-        <div class="fin-cal-stat-value">${fmt(netCashFlow)}</div>
-        <div class="fin-cal-stat-sub">Committed: ${fmt(totalCommitted)}</div>
-      </div>
-    </div>
-  </div>`;
 
   // ─── Upcoming events panel (next 14 days) ─────────────────────────────────
   const upcoming = _getUpcomingEvents(14);

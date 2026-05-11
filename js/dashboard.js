@@ -7,15 +7,17 @@ import { fetchRows, writeAllRows } from './api.js';
 import { calcAmortizationFull } from './loans.js';
 
 function _getLoanOutstanding(loan) {
-  if (!loan || loan.status !== 'active') return 0;
+  if (!loan || (loan.status ?? '').toLowerCase() !== 'active') return 0;
+  const principal = Number(loan.principal) || 0;
   const schedule = calcAmortizationFull(loan);
-  if (!schedule.length) return loan.principal;
+  if (!schedule.length) return principal;
   const start = new Date((loan.startDate || '') + 'T00:00:00');
   const now = new Date();
   const elapsed = Math.max(0,
     (now.getFullYear() - start.getFullYear()) * 12 + (now.getMonth() - start.getMonth()));
   const paidMonths = Math.min(elapsed, schedule.length);
-  return paidMonths === 0 ? loan.principal : (schedule[paidMonths - 1]?.balance ?? 0);
+  const balance = paidMonths === 0 ? principal : (schedule[paidMonths - 1]?.balance ?? 0);
+  return balance > 0 ? balance : principal;
 }
 
 let _categoryChart      = null;
@@ -39,6 +41,7 @@ const INR = (v) => '\u20B9' + new Intl.NumberFormat('en-IN').format(v);
 
 export function render() {
   _renderSummary();
+  _renderIncomeBudgetBar();
   _renderNetWorth();
   _renderSpendRate();
   _renderSavingsRate();
@@ -104,6 +107,67 @@ function _renderSummary() {
   if (totalIncomeEl)  totalIncomeEl.textContent  = formatCurrency(allIncome);
   if (totalExpenseEl) totalExpenseEl.textContent = formatCurrency(allExpense);
   if (totalNetEl)     totalNetEl.textContent     = formatCurrency(allNet);
+}
+
+function _renderIncomeBudgetBar() {
+  const card = el('dash-ibp');
+  if (!card) return;
+
+  const expenses = store.get('expenses') ?? [];
+  const income   = store.get('income')   ?? [];
+  const totalIncome  = income.filter(r => isInCurrentMonth(r.date)).reduce((s, r) => s + r.amount, 0);
+  const totalExpense = expenses.filter(r => isInCurrentMonth(r.date)).reduce((s, r) => s + r.amount, 0);
+  const savings      = Math.max(0, totalIncome - totalExpense);
+  const safe         = totalIncome - totalExpense;
+  const pct          = totalIncome > 0 ? Math.min(100, Math.round((totalExpense / totalIncome) * 100)) : 0;
+  const savingsRate  = totalIncome > 0 ? Math.round((savings / totalIncome) * 100) : 0;
+
+  // Fill bar color
+  const color = pct < 60  ? 'linear-gradient(90deg,#10b981,#34d399)'
+              : pct < 85  ? 'linear-gradient(90deg,#f59e0b,#fbbf24)'
+                          : 'linear-gradient(90deg,#ef4444,#f87171)';
+  const fill = el('ibp-fill');
+  if (fill) { fill.style.width = pct + '%'; fill.style.background = color; }
+
+  // Badge
+  const badge = el('ibp-pct-badge');
+  if (badge) {
+    badge.textContent = pct + '% spent';
+    badge.className = 'dash-ibp-pct-badge ' + (pct < 60 ? 'ibp-good' : pct < 85 ? 'ibp-warn' : 'ibp-danger');
+  }
+
+  // Values
+  const fmtShort = v => {
+    if (v >= 1e5) return '₹' + (v / 1e5).toFixed(1) + 'L';
+    if (v >= 1e3) return '₹' + (v / 1e3).toFixed(1) + 'K';
+    return '₹' + Math.round(v);
+  };
+  const setText = (id, txt) => { const e = el(id); if (e) e.textContent = txt; };
+  setText('ibp-income',  fmtShort(totalIncome));
+  setText('ibp-safe',    safe >= 0 ? fmtShort(safe) : '−' + fmtShort(Math.abs(safe)));
+  setText('ibp-spent',   formatCurrency(totalExpense) + ' spent');
+  setText('ibp-savings', formatCurrency(savings) + ' savings');
+  setText('ibp-rate',    savingsRate + '% savings rate');
+
+  // Insight
+  const insight = el('ibp-insight');
+  if (insight) {
+    if (totalIncome === 0) {
+      insight.textContent = 'No income recorded this month yet.';
+    } else if (pct >= 100) {
+      insight.innerHTML = `<i class="bi bi-exclamation-triangle-fill" style="color:#ef4444"></i> Expenses exceeded income by <strong>${formatCurrency(totalExpense - totalIncome)}</strong> this month.`;
+    } else if (pct >= 85) {
+      insight.innerHTML = `<i class="bi bi-exclamation-circle-fill" style="color:#f59e0b"></i> You've spent <strong>${pct}%</strong> of your income — only <strong>${fmtShort(safe)}</strong> remaining.`;
+    } else if (pct >= 60) {
+      insight.innerHTML = `<i class="bi bi-check-circle-fill" style="color:#10b981"></i> Spending is moderate at <strong>${pct}%</strong>. <strong>${fmtShort(safe)}</strong> still available.`;
+    } else {
+      insight.innerHTML = `<i class="bi bi-star-fill" style="color:#6366f1"></i> Great discipline! Only <strong>${pct}%</strong> spent — saving <strong>${fmtShort(savings)}</strong> this month.`;
+    }
+  }
+
+  // Safe-to-spend label changes when over budget
+  const safeLabel = card.querySelector('.dash-ibp-side--right .dash-ibp-label');
+  if (safeLabel) safeLabel.textContent = safe >= 0 ? 'Safe to Spend' : 'Overspent by';
 }
 
 function _renderNetWorth() {
@@ -486,6 +550,12 @@ function _renderHeatmap() {
     if (r.date) spendMap[r.date] = (spendMap[r.date] ?? 0) + r.amount;
   });
 
+  if (Object.keys(spendMap).length === 0) {
+    container.innerHTML = `<div class="text-center py-4"><i class="bi bi-calendar3 text-muted" style="font-size:2rem"></i><p class="text-muted small mt-2 mb-0">No expense data yet — your spending heatmap will appear here once you add expenses.</p></div>`;
+    if (monthRow) monthRow.innerHTML = '';
+    return;
+  }
+
   // Use local date parts directly — never rely on Date object comparison
   const now = new Date();
   const todayStr = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
@@ -667,7 +737,7 @@ function _renderCategoryBreakdown() {
   }
 }
 
-// Top 5 Spending Categories (current month)
+// Top 6 Spending Categories (current month)
 function _renderTop5Categories() {
   const container = el('dash-top5');
   if (!container) return;
@@ -675,13 +745,13 @@ function _renderTop5Categories() {
   const thisMonth = expenses.filter(r => isInCurrentMonth(r.date));
   const byCategory = {};
   thisMonth.forEach(r => { byCategory[r.category] = (byCategory[r.category] ?? 0) + r.amount; });
-  const sorted = Object.entries(byCategory).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  const sorted = Object.entries(byCategory).sort((a, b) => b[1] - a[1]).slice(0, 6);
   if (sorted.length === 0) {
     container.innerHTML = '<p class="text-muted small">No expenses this month.</p>';
     return;
   }
   const max = sorted[0][1];
-  const BAR_COLORS = ['#ef4444','#f59e0b','#3b82f6','#6366f1','#64748b'];
+  const BAR_COLORS = ['#ef4444','#f59e0b','#3b82f6','#6366f1','#10b981','#64748b'];
   container.innerHTML = sorted.map(([cat, amt], i) => {
     const pct = max > 0 ? (amt / max) * 100 : 0;
     const color = BAR_COLORS[i];
@@ -751,32 +821,32 @@ function _renderCreditUtilization() {
     container.innerHTML = `<div class="text-center py-3"><i class="bi bi-credit-card text-muted" style="font-size:1.8rem"></i><p class="text-muted small mt-2 mb-0">No credit cards added yet. <a href="#" onclick="document.querySelector('[data-tab=tab-accounts]').click();return false">Add a card</a> to start tracking.</p></div>`;
     return;
   }
-  const now = new Date();
+  const _billKeywords = ['cc payment', 'credit card payment', 'bill payment', 'card payment', 'cc bill'];
+  const _isBillPay = e => {
+    const cat  = String(e.category    ?? '').trim().toLowerCase();
+    const desc = String(e.description ?? '').trim().toLowerCase();
+    return _billKeywords.some(k => cat === k || desc.includes(k));
+  };
   container.innerHTML = cards.map(c => {
-    // Determine billing cycle start date
-    let cycleStart;
-    if (c.billingCycleStart) {
-      const sd = parseInt(c.billingCycleStart, 10);
-      cycleStart = now.getDate() >= sd
-        ? new Date(now.getFullYear(), now.getMonth(), sd)
-        : new Date(now.getFullYear(), now.getMonth() - 1, sd);
-    } else {
-      cycleStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    }
-    const cycleStartStr = `${cycleStart.getFullYear()}-${String(cycleStart.getMonth()+1).padStart(2,'0')}-${String(cycleStart.getDate()).padStart(2,'0')}`;
-    // Exclude "CC Payment" entries; filter to current billing cycle only
-    const spent = expenses
-      .filter(e => e.paymentMethod === c.name
-        && String(e.category ?? '').trim().toLowerCase() !== 'cc payment'
-        && (e.date ?? '') >= cycleStartStr)
-      .reduce((s, e) => s + e.amount, 0);
-    const paid  = ccPayments
-      .filter(p => p.cardName === c.name && (p.date ?? '') >= cycleStartStr)
-      .reduce((s, p) => s + p.amount, 0);
+    const spent       = expenses.filter(e => e.paymentMethod === c.name && !_isBillPay(e)).reduce((s, e) => s + e.amount, 0);
+    const paid        = ccPayments.filter(p => p.cardName === c.name).reduce((s, p) => s + p.amount, 0);
     const outstanding = Math.max(spent - paid, 0);
-    const pct    = c.creditLimit > 0 ? Math.min((outstanding / c.creditLimit) * 100, 100) : 0;
-    const barCls = pct >= 90 ? 'bg-danger' : pct >= 70 ? 'bg-warning' : 'bg-info';
-    return `<div class="mb-3"><div class="d-flex justify-content-between align-items-center mb-1"><span class="small fw-semibold">${escapeHtml(c.name)}</span><span class="small text-muted">${formatCurrency(outstanding)} / ${formatCurrency(c.creditLimit)}</span></div><div class="progress" style="height:10px"><div class="progress-bar ${barCls}" role="progressbar" style="width:${pct.toFixed(1)}%" aria-valuenow="${pct.toFixed(0)}" aria-valuemin="0" aria-valuemax="100"></div></div><div class="text-muted" style="font-size:.65rem;margin-top:2px">Current cycle from ${cycleStartStr}</div></div>`;
+    const available   = Math.max(c.creditLimit - outstanding, 0);
+    const pct         = c.creditLimit > 0 ? Math.min((outstanding / c.creditLimit) * 100, 100) : 0;
+    const color       = pct >= 70 ? '#ef4444' : pct >= 30 ? '#f59e0b' : '#10b981';
+    return `<div class="mb-3">
+      <div class="d-flex justify-content-between align-items-center mb-1">
+        <span class="small fw-semibold">${escapeHtml(c.name)}</span>
+        <span class="small fw-semibold" style="color:${color}">${pct.toFixed(0)}%</span>
+      </div>
+      <div class="progress mb-1" style="height:8px;border-radius:4px;background:#f1f5f9">
+        <div class="progress-bar" role="progressbar" style="width:${pct.toFixed(1)}%;background:${color};border-radius:4px" aria-valuenow="${pct.toFixed(0)}" aria-valuemin="0" aria-valuemax="100"></div>
+      </div>
+      <div class="d-flex justify-content-between" style="font-size:.72rem;color:#94a3b8">
+        <span>${formatCurrency(outstanding)} used</span>
+        <span>${formatCurrency(available)} available</span>
+      </div>
+    </div>`;
   }).join('');
 }
 
@@ -830,6 +900,7 @@ function _renderTrendChart() {
       },
       options: {
         responsive: true,
+        maintainAspectRatio: false,
         plugins: { legend: { position: 'top' } },
         scales: { y: { ticks: { callback: (v) => INR(v) } } },
       },
@@ -881,6 +952,8 @@ function _renderNetSavingsChart() {
       },
       options: {
         responsive: true,
+        maintainAspectRatio: false,
+        layout: { padding: 0 },
         plugins: { legend: { position: 'top' } },
         scales: {
           y: {
@@ -1183,24 +1256,39 @@ function _renderPaymentReminders() {
   const creditCards  = store.get('creditCards') ?? [];
   const ccPayments   = store.get('ccPayments')  ?? [];
   creditCards.filter(c => c.dueDay).forEach(c => {
-    const todayDay = today.getDate();
-    const year = today.getFullYear();
-    const month = today.getMonth();
+    const todayDay  = today.getDate();
+    const year      = today.getFullYear();
+    const month     = today.getMonth();
     const daysInMonth = new Date(year, month + 1, 0).getDate();
     const effectiveDue = Math.min(c.dueDay, daysInMonth);
-    // Negative = overdue, 0 = due today, positive = days until due
-    const daysUntil = effectiveDue - todayDay;
 
-    // Payment window: billing cycle end → today (covers early and late payments)
+    // Cross-month aware daysUntil (same logic as _daysUntilNext in accounts.js)
+    let daysUntil;
+    let nextDueDate;
+    if (effectiveDue >= todayDay) {
+      daysUntil    = effectiveDue - todayDay;
+      nextDueDate  = new Date(year, month, effectiveDue);
+    } else {
+      const nextMonth    = month === 11 ? 0  : month + 1;
+      const nextYear     = month === 11 ? year + 1 : year;
+      const daysInNext   = new Date(nextYear, nextMonth + 1, 0).getDate();
+      const nextEffective = Math.min(c.dueDay, daysInNext);
+      daysUntil    = daysInMonth - todayDay + nextEffective;
+      nextDueDate  = new Date(nextYear, nextMonth, nextEffective);
+    }
+
+    // Payment window anchored to the NEXT due date's billing cycle
     let paymentWindowStart;
     if (c.billingCycleStart) {
-      const sd = c.billingCycleStart;
-      const endDay = sd === 1 ? new Date(year, month, 0).getDate() : sd - 1;
-      const endMonth = month === 0 ? 11 : month - 1;
-      const endYear  = month === 0 ? year - 1 : year;
-      paymentWindowStart = new Date(endYear, endMonth, endDay);
+      const sd       = c.billingCycleStart;
+      const dueYear  = nextDueDate.getFullYear();
+      const dueMon   = nextDueDate.getMonth();
+      const endDay   = sd === 1 ? new Date(dueYear, dueMon, 0).getDate() : sd - 1;
+      const prevMon  = dueMon === 0 ? 11  : dueMon - 1;
+      const prevYear = dueMon === 0 ? dueYear - 1 : dueYear;
+      paymentWindowStart = new Date(prevYear, prevMon, endDay);
     } else {
-      paymentWindowStart = new Date(year, month, effectiveDue);
+      paymentWindowStart = new Date(nextDueDate);
       paymentWindowStart.setDate(paymentWindowStart.getDate() - 35);
     }
     const paidThisCycle = ccPayments.some(p => {
@@ -1210,7 +1298,7 @@ function _renderPaymentReminders() {
     });
     if (paidThisCycle) return;
 
-    // Show if upcoming within N days OR already overdue
+    // Show if due within window (upcoming) or overdue (negative daysUntil no longer possible)
     if (daysUntil <= windowDays) {
       reminders.push({ type: 'creditcard', data: c, daysUntil });
     }
@@ -1825,7 +1913,7 @@ function _renderNetWorthGoal() {
   body.innerHTML = `<div class="nwg-body">
     <div class="nwg-stats">
       <div class="nwg-stat"><div class="nwg-stat-label">Current Net Worth</div><div class="nwg-stat-value" style="color:#6366f1">${formatCurrency(Math.round(current))}</div></div>
-      <div class="nwg-stat"><div class="nwg-stat-label">Target</div><div class="nwg-stat-value" style="color:#f3f4f6">${formatCurrency(Math.round(target))}</div></div>
+      <div class="nwg-stat"><div class="nwg-stat-label">Target</div><div class="nwg-stat-value" style="color:#1e293b">${formatCurrency(Math.round(target))}</div></div>
       <div class="nwg-stat"><div class="nwg-stat-label">${achieved ? 'Surplus' : 'Remaining'}</div><div class="nwg-stat-value" style="color:${achieved ? '#10b981' : '#ef4444'}">${formatCurrency(Math.abs(Math.round(gap)))}</div></div>
       <div class="nwg-stat"><div class="nwg-stat-label">Progress</div><div class="nwg-stat-value" style="color:${barColor}">${pct.toFixed(1)}%</div></div>
     </div>
@@ -2029,25 +2117,99 @@ export function init() {
   if (tiersMonth) tiersMonth.addEventListener('change', _renderSpendingTiers);
 
   // Quick-Add FAB
-  const fabBtn  = document.getElementById('dash-fab-btn');
-  const fabMenu = document.getElementById('dash-fab-menu');
+  const fabBtn    = document.getElementById('dash-fab-btn');
+  const fabMenu   = document.getElementById('dash-fab-menu');
+  const quickPanel = document.getElementById('dash-quick-panel');
+
+  function _closeFab() {
+    fabMenu?.classList.add('d-none');
+    if (quickPanel) quickPanel.style.display = 'none';
+    if (fabBtn) fabBtn.style.transform = '';
+  }
+
   if (fabBtn && fabMenu) {
     fabBtn.addEventListener('click', e => {
       e.stopPropagation();
       const open = !fabMenu.classList.contains('d-none');
       fabMenu.classList.toggle('d-none', open);
       fabBtn.style.transform = open ? '' : 'rotate(45deg)';
+      if (open && quickPanel) quickPanel.style.display = 'none';
     });
-    document.addEventListener('click', () => {
-      fabMenu.classList.add('d-none');
-      fabBtn.style.transform = '';
-    });
-    // Close menu when a modal opens from the FAB
+    document.addEventListener('click', _closeFab);
     ['dash-fab-expense', 'dash-fab-income'].forEach(id => {
-      document.getElementById(id)?.addEventListener('click', () => {
-        fabMenu.classList.add('d-none');
-        fabBtn.style.transform = '';
-      });
+      document.getElementById(id)?.addEventListener('click', _closeFab);
+    });
+  }
+
+  // Quick Expense panel
+  const quickBtn = document.getElementById('dash-fab-quick');
+  if (quickBtn && quickPanel) {
+    quickBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      fabMenu?.classList.add('d-none');
+      const isOpen = quickPanel.style.display !== 'none';
+      quickPanel.style.display = isOpen ? 'none' : 'block';
+      if (!isOpen) {
+        // Set today's date
+        const dqDate = document.getElementById('dq-date');
+        if (dqDate && !dqDate.value) {
+          const n = new Date();
+          dqDate.value = `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}-${String(n.getDate()).padStart(2,'0')}`;
+        }
+        // Populate categories
+        const dqCat = document.getElementById('dq-category');
+        if (dqCat && dqCat.options.length <= 1) {
+          const cats = store.get('expenseCategories') ?? [];
+          cats.forEach(c => {
+            const opt = document.createElement('option');
+            opt.value = c.name ?? c;
+            opt.textContent = c.name ?? c;
+            dqCat.appendChild(opt);
+          });
+        }
+        // Populate accounts
+        const dqAcc = document.getElementById('dq-account');
+        if (dqAcc && dqAcc.options.length <= 1) {
+          const accs = store.get('accounts') ?? [];
+          const cards = store.get('creditCards') ?? [];
+          [...accs.map(a => a.name), ...cards.map(c => c.name)].filter(Boolean).forEach(name => {
+            const opt = document.createElement('option');
+            opt.value = name; opt.textContent = name;
+            dqAcc.appendChild(opt);
+          });
+        }
+        document.getElementById('dq-amount')?.focus();
+      }
+    });
+
+    quickPanel.addEventListener('click', e => e.stopPropagation());
+    document.getElementById('dqp-close')?.addEventListener('click', e => {
+      e.stopPropagation();
+      quickPanel.style.display = 'none';
+    });
+
+    document.getElementById('dash-quick-form')?.addEventListener('submit', async e => {
+      e.preventDefault();
+      const amount   = parseFloat(document.getElementById('dq-amount')?.value);
+      const date     = document.getElementById('dq-date')?.value;
+      const category = document.getElementById('dq-category')?.value;
+      const desc     = document.getElementById('dq-desc')?.value?.trim() ?? '';
+      const account  = document.getElementById('dq-account')?.value ?? '';
+      if (!amount || amount <= 0 || !date || !category) return;
+
+      const feedback = document.getElementById('dqp-feedback');
+      try {
+        const { appendRow } = await import('./api.js');
+        const { serialize, deserialize } = await import('./expenses.js');
+        const record = { date, category, subCategory: '', amount, description: desc, paymentMethod: account };
+        await appendRow(CONFIG.sheets.expenses, serialize(record));
+        store.set('expenses', [...(store.get('expenses') ?? []), record]);
+        document.getElementById('dash-quick-form').reset();
+        document.getElementById('dq-date').value = date;
+        if (feedback) { feedback.textContent = '✓ Expense saved!'; feedback.classList.remove('d-none'); setTimeout(() => feedback.classList.add('d-none'), 2000); }
+      } catch (err) {
+        if (feedback) { feedback.textContent = 'Error saving — try again.'; feedback.className = 'text-danger small mt-2 mb-0'; feedback.classList.remove('d-none'); }
+      }
     });
   }
 

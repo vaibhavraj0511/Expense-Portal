@@ -106,6 +106,7 @@ function _getCreateDate(rec) {
 export async function processDueRecurring() {
   const todayStr = new Date().toISOString().slice(0, 10);
   let current = store.get('recurring') ?? [];
+  let anyCreated = false;
 
   for (const rec of current.filter(t => !t.paused)) {
     const createDate = _getCreateDate(rec);
@@ -113,27 +114,33 @@ export async function processDueRecurring() {
 
     try {
       if (rec.type === 'expense') {
-        const { serialize: serExp, deserialize: deExp } = await import('./expenses.js');
+        const { serialize: serExp } = await import('./expenses.js');
         const record = { date: createDate, category: rec.category, subCategory: '', amount: rec.amount, description: rec.description, paymentMethod: rec.paymentMethod };
         await appendRow(CONFIG.sheets.expenses, serExp(record));
-        const rows = await fetchRows(CONFIG.sheets.expenses);
-        store.set('expenses', rows.map(deExp));
+        store.set('expenses', [...(store.get('expenses') ?? []), record]);
       } else {
-        const { serialize: serInc, deserialize: deInc } = await import('./income.js');
+        const { serialize: serInc } = await import('./income.js');
         const record = { date: createDate, source: rec.category, amount: rec.amount, description: rec.description, receivedIn: rec.paymentMethod };
         await appendRow(CONFIG.sheets.income, serInc(record));
-        const rows = await fetchRows(CONFIG.sheets.income);
-        store.set('income', rows.map(deInc));
+        store.set('income', [...(store.get('income') ?? []), record]);
       }
 
       current = current.map(t => t.id === rec.id ? { ...t, lastCreated: todayStr } : t);
-      await writeAllRows(CONFIG.sheets.recurring, current.map(serialize));
-      store.set('recurring', current);
+      anyCreated = true;
 
       const label = createDate === todayStr ? 'today' : `backdated to ${createDate}`;
       console.info(`[recurring] Created ${rec.type}: ${rec.description} ${label} (${formatCurrency(rec.amount)})`);
     } catch (err) {
       console.warn('[recurring] Failed to create entry:', err);
+    }
+  }
+
+  if (anyCreated) {
+    try {
+      await writeAllRows(CONFIG.sheets.recurring, current.map(serialize));
+      store.set('recurring', current);
+    } catch (err) {
+      console.warn('[recurring] Failed to update lastCreated timestamps:', err);
     }
   }
 }

@@ -664,6 +664,10 @@ hr { border-color: rgba(255,255,255,.07) !important; }
 .ug-body, .ug-modal-content { background: #0d0d16 !important; }
 .ug-facts { background: #080810 !important; border-color: rgba(255,255,255,.07) !important; }
 .ug-fact { border-color: rgba(255,255,255,.07) !important; }
+.ug-fact--green { background: rgba(22,163,74,.12) !important; }
+.ug-fact--amber { background: rgba(217,119,6,.12) !important; }
+.ug-fact--blue  { background: rgba(37,99,235,.12) !important; }
+.ug-fact--violet { background: rgba(124,58,237,.12) !important; }
 .ug-card { background: #111120 !important; border-color: rgba(255,255,255,.07) !important; }
 .ug-card p { color: #6b7280 !important; }
 .ug-card-head strong { color: #f3f4f6 !important; }

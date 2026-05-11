@@ -1073,12 +1073,12 @@ function renderBiggestTransactions(expenses) {
   const curYM = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
   const thisMonth = (expenses ?? []).filter(r => String(r.date ?? '').slice(0,7) === curYM);
 
-  // Group by description + category — sum amounts, keep earliest date
+  // Group by description + category — sum amounts
   const grouped = {};
   thisMonth.forEach(r => {
     const desc = (r.description || r.category || 'Expense').replace(/\s*\[.*?\]/g, '').trim();
     const key = `${desc.toLowerCase()}||${(r.category ?? '').toLowerCase()}`;
-    if (!grouped[key]) grouped[key] = { desc, category: r.category, amount: 0, date: r.date };
+    if (!grouped[key]) grouped[key] = { desc, category: r.category, amount: 0 };
     grouped[key].amount += Number(r.amount) || 0;
   });
 
@@ -1092,12 +1092,11 @@ function renderBiggestTransactions(expenses) {
 
   return `<div class="ai-bigtxn-list">
     ${top.map((t, i) => {
-      const dateStr = t.date ? new Date(t.date + 'T12:00:00').toLocaleDateString('en-IN', { day:'numeric', month:'short' }) : '';
       return `<div class="ai-bigtxn-row">
         <div class="ai-bigtxn-rank" style="background:${COLORS[i]}18;color:${COLORS[i]}">${i+1}</div>
         <div class="ai-bigtxn-info">
           <div class="ai-bigtxn-desc">${esc(t.desc)}</div>
-          <div class="ai-bigtxn-meta">${esc(t.category ?? '')}${dateStr ? ' · ' + dateStr : ''}</div>
+          <div class="ai-bigtxn-meta">${esc(t.category ?? '')}</div>
         </div>
         <div class="ai-bigtxn-amt" style="color:${COLORS[i]}">${fmt(Math.round(t.amount))}</div>
       </div>`;

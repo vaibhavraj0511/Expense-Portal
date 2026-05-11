@@ -80,6 +80,7 @@ const _EMPTY_CTA = {
   'rpt-mileage':        'Log fuel fills with odometer readings',
   'rpt-veh-cost':       'Log vehicle trips or maintenance expenses',
   'rpt-veh-donut':      'Log vehicle expenses to see the cost split',
+  'rpt-forecast-bar':   'Add expenses for the past few months to generate a forecast',
 };
 
 function _noData(canvasId, msg = 'No data yet') {
@@ -463,16 +464,25 @@ function _mileageTrend(canvasId) {
   });
 }
 
+const _FUEL_KEYWORDS = ['petrol', 'fuel', 'diesel', 'cng', 'lpg', 'ev charge', 'charging', 'petrol/fuel'];
+function _isFuelExpense(e) {
+  const t = (e.expenseType ?? '').toLowerCase();
+  return _FUEL_KEYWORDS.some(k => t.includes(k));
+}
+
 function _vehicleCostBar(canvasId) {
   const canvas = _el(canvasId);
   if (!canvas) return;
   _kill(canvasId);
 
-  const months = _lastNMonths();
-  const trips  = store.get('tripLogs') ?? [];
-  const veExps = store.get('vehicleExpenses') ?? [];
-  const fuel   = months.map(ym => trips.filter(t => (t.date ?? '').startsWith(ym)).reduce((s, t) => s + (Number(t.fuelCost) || 0), 0));
-  const maint  = months.map(ym => veExps.filter(e => (e.date ?? '').startsWith(ym)).reduce((s, e) => s + (Number(e.amount) || 0), 0));
+  const months    = _lastNMonths();
+  const veExps    = store.get('vehicleExpenses') ?? [];
+  const fuelExps  = veExps.filter(e => _isFuelExpense(e));
+  const maintExps = veExps.filter(e => !_isFuelExpense(e));
+  const fuel  = months.map(ym =>
+    fuelExps.filter(e => (e.date ?? '').startsWith(ym)).reduce((s, e) => s + (Number(e.amount) || 0), 0)
+  );
+  const maint = months.map(ym => maintExps.filter(e => (e.date ?? '').startsWith(ym)).reduce((s, e) => s + (Number(e.amount) || 0), 0));
 
   if (!fuel.some(Boolean) && !maint.some(Boolean)) { _noData(canvasId, 'No vehicle cost data'); return; }
   _showCanvas(canvasId);
@@ -506,8 +516,9 @@ function _vehicleDonut(canvasId) {
   if (!canvas) return;
   _kill(canvasId);
 
-  const fuel  = (store.get('tripLogs') ?? []).reduce((s, t) => s + (Number(t.fuelCost) || 0), 0);
-  const maint = (store.get('vehicleExpenses') ?? []).reduce((s, e) => s + (Number(e.amount) || 0), 0);
+  const veExps   = store.get('vehicleExpenses') ?? [];
+  const fuel  = veExps.filter(e => _isFuelExpense(e)).reduce((s, e) => s + (Number(e.amount) || 0), 0);
+  const maint = veExps.filter(e => !_isFuelExpense(e)).reduce((s, e) => s + (Number(e.amount) || 0), 0);
   if (!fuel && !maint) { _noData(canvasId, 'No data'); return; }
   _showCanvas(canvasId);
 
@@ -788,7 +799,367 @@ function _renderSpendingDayTiers() {
   });
 }
 
-// ─── Period filter ────────────────────────────────────────────────────────────
+// ─── Month-over-Month Comparison ─────────────────────────────────────────────
+
+function _renderMoM() {
+  const el = _el('rpt-mom-content');
+  if (!el) return;
+
+  const expenses = store.get('expenses') ?? [];
+  const income   = store.get('income')   ?? [];
+
+  const now      = new Date();
+  const curYM    = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const prevDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const prevYM   = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, '0')}`;
+
+  const curLabel  = now.toLocaleString('default', { month: 'long', year: 'numeric' });
+  const prevLabel = prevDate.toLocaleString('default', { month: 'long', year: 'numeric' });
+
+  const curExp  = expenses.filter(e => (e.date ?? '').startsWith(curYM)).reduce((s, e) => s + (Number(e.amount) || 0), 0);
+  const prevExp = expenses.filter(e => (e.date ?? '').startsWith(prevYM)).reduce((s, e) => s + (Number(e.amount) || 0), 0);
+  const curInc  = income.filter(i => (i.date ?? '').startsWith(curYM)).reduce((s, i) => s + (Number(i.amount) || 0), 0);
+  const prevInc = income.filter(i => (i.date ?? '').startsWith(prevYM)).reduce((s, i) => s + (Number(i.amount) || 0), 0);
+  const curNet  = curInc - curExp;
+  const prevNet = prevInc - prevExp;
+
+  const expChgPct = prevExp > 0 ? ((curExp - prevExp) / prevExp) * 100 : null;
+
+  const _row = (label, cur, prev, icon, accentColor, lowerIsBetter = false) => {
+    const diff   = cur - prev;
+    const pct    = prev !== 0 ? Math.round((diff / Math.abs(prev)) * 100) : null;
+    const up     = diff > 0;
+    const flat   = pct !== null && Math.abs(pct) < 2;
+    const good   = flat ? true : lowerIsBetter ? !up : up;
+    const tc     = flat ? '#94a3b8' : good ? '#10b981' : '#ef4444';
+    const ti     = flat ? 'bi-dash-lg' : up ? 'bi-arrow-up' : 'bi-arrow-down';
+    const pctStr = pct !== null ? `${up ? '+' : ''}${pct}%` : '—';
+    const diffStr = `${diff >= 0 ? '+' : '\u2212'}${formatCurrency(Math.abs(diff))}`;
+    return `<div class="mom-row">
+      <div class="mom-row-label"><i class="bi ${icon} me-2" style="color:${accentColor}"></i>${label}</div>
+      <div class="mom-row-prev">${formatCurrency(prev)}</div>
+      <div class="mom-row-cur fw-semibold">${formatCurrency(cur)}</div>
+      <div class="mom-row-change" style="color:${tc}"><i class="bi ${ti} me-1"></i>${pctStr}<span class="mom-diff">${diffStr}</span></div>
+    </div>`;
+  };
+
+  let insightHtml = '';
+  if (expChgPct !== null) {
+    const abs = Math.abs(expChgPct);
+    const ic  = expChgPct > 10 ? '#ef4444' : expChgPct > 2 ? '#f59e0b' : '#10b981';
+    const ii  = expChgPct > 2 ? 'bi-exclamation-circle-fill' : 'bi-check-circle-fill';
+    const msg = abs < 2
+      ? `Spending is about the same as last month.`
+      : expChgPct > 0
+        ? `You spent <strong>${abs.toFixed(1)}% more</strong> than last month (${formatCurrency(curExp - prevExp)} extra).`
+        : `You spent <strong>${abs.toFixed(1)}% less</strong> than last month — saved ${formatCurrency(prevExp - curExp)}.`;
+    insightHtml = `<div class="mom-insight" style="border-left:3px solid ${ic};background:${ic}18;color:${ic}"><i class="bi ${ii} me-2"></i>${msg}</div>`;
+  }
+
+  el.innerHTML = `${insightHtml}
+    <div class="mom-table">
+      <div class="mom-header">
+        <div class="mom-row-label"></div>
+        <div class="mom-row-prev">${prevLabel}</div>
+        <div class="mom-row-cur">${curLabel}</div>
+        <div class="mom-row-change">Change</div>
+      </div>
+      ${_row('Expenses',     curExp,  prevExp,  'bi-arrow-up-circle-fill',   '#ef4444', true)}
+      ${_row('Income',       curInc,  prevInc,  'bi-arrow-down-circle-fill', '#10b981')}
+      ${_row('Net Savings',  curNet,  prevNet,  'bi-wallet2',               '#6366f1')}
+    </div>`;
+}
+
+// ─── Category Trend Table ─────────────────────────────────────────────────────
+
+function _renderCategoryTrends() {
+  const el = _el('rpt-cat-trend-list');
+  if (!el) return;
+
+  const expenses = store.get('expenses') ?? [];
+  const now = new Date();
+  const months = [];
+  for (let i = 3; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    months.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+  }
+
+  const catTotals = {};
+  expenses.filter(e => months.slice(0, 3).some(m => (e.date ?? '').startsWith(m)))
+    .forEach(e => { if (e.category) catTotals[e.category] = (catTotals[e.category] ?? 0) + (Number(e.amount) || 0); });
+
+  const topCats = Object.entries(catTotals).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([k]) => k);
+  if (!topCats.length) { el.innerHTML = '<p class="text-muted small mb-0">No category data yet.</p>'; return; }
+
+  const mLabels = months.map(ym => {
+    const [y, m] = ym.split('-');
+    return new Date(+y, +m - 1, 1).toLocaleString('default', { month: 'short' });
+  });
+
+  const rows = topCats.map((cat, idx) => {
+    const ms      = months.map(ym => expenses.filter(e => e.category === cat && (e.date ?? '').startsWith(ym)).reduce((s, e) => s + (Number(e.amount) || 0), 0));
+    const cur     = ms[3];
+    const prev    = ms[2];
+    const diff    = cur - prev;
+    const pct     = prev > 0 ? Math.round((diff / prev) * 100) : (cur > 0 ? null : 0);
+    const flat    = pct !== null && Math.abs(pct) < 5;
+    const up      = diff > 0;
+    const tc      = flat ? '#94a3b8' : up ? '#ef4444' : '#10b981';
+    const ti      = flat ? 'bi-dash-lg' : up ? 'bi-arrow-up-right' : 'bi-arrow-down-right';
+    const pctStr  = pct !== null ? `${up ? '+' : ''}${pct}%` : 'New';
+    const color   = P[idx % P.length];
+    const maxV    = Math.max(...ms, 1);
+    const bars    = ms.map((v, i) => `<span style="display:inline-block;width:7px;height:${Math.max(Math.round((v / maxV) * 26), 2)}px;border-radius:2px;background:${i === 3 ? color : color + '55'};margin-top:auto"></span>`).join('');
+    return `<div class="ctt-row">
+      <div class="ctt-name"><span class="ctt-dot" style="background:${color}"></span>${cat}</div>
+      <div class="ctt-spark" style="display:flex;align-items:flex-end;gap:2px;height:26px">${bars}</div>
+      <div class="ctt-prev">${formatCurrency(prev)}</div>
+      <div class="ctt-cur">${formatCurrency(cur)}</div>
+      <div class="ctt-pct" style="color:${tc}"><i class="bi ${ti} me-1"></i>${pctStr}</div>
+    </div>`;
+  });
+
+  el.innerHTML = `<div class="ctt-table">
+    <div class="ctt-head">
+      <div class="ctt-name">Category</div>
+      <div class="ctt-spark" style="display:flex;gap:2px">${mLabels.map(l => `<span style="width:7px;font-size:.58rem;text-align:center;color:#94a3b8">${l[0]}</span>`).join('')}</div>
+      <div class="ctt-prev">${mLabels[2]}</div>
+      <div class="ctt-cur">${mLabels[3]}</div>
+      <div class="ctt-pct">Trend</div>
+    </div>
+    ${rows.join('')}
+  </div>`;
+}
+
+// ─── Spending Trend Forecast ──────────────────────────────────────────────────
+
+let _forecastMonths = 3; // 3 or 6
+
+function _spendingForecast(canvasId) {
+  const canvas = _el(canvasId);
+  if (!canvas) return;
+  _kill(canvasId);
+
+  const expenses = store.get('expenses') ?? [];
+  const now = new Date();
+
+  // Build the last N months (excluding current month to avoid partial data skewing)
+  const histMonths = [];
+  for (let i = _forecastMonths; i >= 1; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    histMonths.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+  }
+
+  // Current month (for comparison in table)
+  const curYM = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+
+  // Next month label
+  const nextDate = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+  const nextYM = `${nextDate.getFullYear()}-${String(nextDate.getMonth() + 1).padStart(2, '0')}`;
+  const nextLabel = nextDate.toLocaleString('default', { month: 'long', year: 'numeric' });
+
+  // Collect all categories that appeared in the history window
+  const histExpenses = expenses.filter(e => histMonths.some(m => (e.date ?? '').startsWith(m)));
+  if (!histExpenses.length) {
+    _noData(canvasId, 'Not enough historical data — add expenses for the past few months');
+    const summaryEl = _el('rpt-forecast-summary');
+    if (summaryEl) summaryEl.innerHTML = '<p class="text-muted small mb-0">No data available.</p>';
+    const tableEl = _el('rpt-forecast-table');
+    if (tableEl) tableEl.innerHTML = '<p class="text-muted small mb-0">No data available.</p>';
+    return;
+  }
+
+  // Per-category average across history months
+  const catTotals = {};
+  histExpenses.forEach(e => {
+    if (!e.category) return;
+    catTotals[e.category] = (catTotals[e.category] ?? 0) + (Number(e.amount) || 0);
+  });
+
+  // Average per month
+  const catAvg = {};
+  Object.entries(catTotals).forEach(([cat, total]) => {
+    catAvg[cat] = total / _forecastMonths;
+  });
+
+  // Sort by forecast amount descending, take top 12
+  const sorted = Object.entries(catAvg)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 12);
+
+  if (!sorted.length) {
+    _noData(canvasId, 'No category data found');
+    return;
+  }
+  _showCanvas(canvasId);
+
+  const labels = sorted.map(([k]) => k);
+  const forecastData = sorted.map(([, v]) => Math.round(v));
+  const totalForecast = forecastData.reduce((s, v) => s + v, 0);
+
+  // Current month actuals for comparison
+  const curActuals = labels.map(cat =>
+    expenses.filter(e => e.category === cat && (e.date ?? '').startsWith(curYM))
+      .reduce((s, e) => s + (Number(e.amount) || 0), 0)
+  );
+
+  _ch[canvasId] = new Chart(canvas, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: `Forecast (${nextLabel})`,
+          data: forecastData,
+          backgroundColor: P.slice(0, labels.length).map(c => c + 'CC'),
+          borderColor: P.slice(0, labels.length),
+          borderWidth: 1.5,
+          borderRadius: 7,
+          borderSkipped: false,
+          order: 1,
+        },
+        {
+          label: 'Current Month Actual',
+          data: curActuals,
+          type: 'line',
+          borderColor: 'rgba(148,163,184,.9)',
+          backgroundColor: 'rgba(148,163,184,.08)',
+          borderWidth: 2,
+          borderDash: [5, 4],
+          pointRadius: 4,
+          pointHoverRadius: 6,
+          tension: 0.3,
+          fill: false,
+          order: 0,
+        },
+      ],
+    },
+    options: {
+      ...BASE_OPTS,
+      plugins: {
+        ...BASE_OPTS.plugins,
+        legend: {
+          display: true,
+          position: 'top',
+          labels: { font: { size: 11 }, color: '#9ca3af', boxWidth: 10, padding: 12, usePointStyle: true },
+        },
+        tooltip: {
+          ...BASE_OPTS.plugins.tooltip,
+          mode: 'index',
+          intersect: false,
+          callbacks: {
+            label: ctx => ` ${ctx.dataset.label}: ${formatCurrency(ctx.parsed.y)}`,
+          },
+        },
+      },
+      scales: {
+        x: { ...BASE_OPTS.scales.x, ticks: { ...BASE_OPTS.scales.x.ticks, maxRotation: 35, minRotation: 0 } },
+        y: {
+          ...BASE_OPTS.scales.y,
+          ticks: { ...BASE_OPTS.scales.y.ticks, callback: v => '₹' + (v >= 1000 ? Math.round(v / 1000) + 'k' : v) },
+        },
+      },
+    },
+  });
+
+  // ── Summary panel ──
+  const summaryEl = _el('rpt-forecast-summary');
+  if (summaryEl) {
+    const curTotal = curActuals.reduce((s, v) => s + v, 0);
+    const diff = totalForecast - curTotal;
+    const diffPct = curTotal > 0 ? Math.round((diff / curTotal) * 100) : null;
+    const diffColor = diff > 0 ? '#ef4444' : '#10b981';
+    const diffIcon = diff > 0 ? 'bi-arrow-up-right' : 'bi-arrow-down-right';
+    const topCat = sorted[0];
+
+    summaryEl.innerHTML = `
+      <div class="rpt-forecast-kpi-grid">
+        <div class="rpt-forecast-kpi">
+          <div class="rpt-forecast-kpi-label">Projected Total</div>
+          <div class="rpt-forecast-kpi-val" style="color:#8b5cf6">${formatCurrency(totalForecast)}</div>
+          <div class="rpt-forecast-kpi-sub">${nextLabel}</div>
+        </div>
+        <div class="rpt-forecast-kpi">
+          <div class="rpt-forecast-kpi-label">Current Month</div>
+          <div class="rpt-forecast-kpi-val">${formatCurrency(curTotal)}</div>
+          <div class="rpt-forecast-kpi-sub">so far</div>
+        </div>
+        <div class="rpt-forecast-kpi">
+          <div class="rpt-forecast-kpi-label">vs Current</div>
+          <div class="rpt-forecast-kpi-val" style="color:${diffColor}">
+            <i class="bi ${diffIcon} me-1"></i>${diffPct !== null ? (diff >= 0 ? '+' : '') + diffPct + '%' : '—'}
+          </div>
+          <div class="rpt-forecast-kpi-sub">${diff >= 0 ? formatCurrency(diff) + ' more' : formatCurrency(Math.abs(diff)) + ' less'}</div>
+        </div>
+        <div class="rpt-forecast-kpi">
+          <div class="rpt-forecast-kpi-label">Avg Basis</div>
+          <div class="rpt-forecast-kpi-val" style="color:#64748b">${_forecastMonths}M</div>
+          <div class="rpt-forecast-kpi-sub">months used</div>
+        </div>
+      </div>
+      <div class="rpt-forecast-top-cat mt-3">
+        <i class="bi bi-trophy-fill me-1" style="color:#f59e0b"></i>
+        Highest forecast: <strong>${topCat[0]}</strong> at <strong>${formatCurrency(Math.round(topCat[1]))}</strong>
+      </div>
+      <div class="rpt-forecast-note mt-2">
+        <i class="bi bi-info-circle me-1"></i>
+        Projection = average of last ${_forecastMonths} complete months per category.
+      </div>`;
+  }
+
+  // ── Forecast table ──
+  const tableEl = _el('rpt-forecast-table');
+  if (tableEl) {
+    const rows = sorted.map(([cat, avg], i) => {
+      const forecast = Math.round(avg);
+      const actual = curActuals[i];
+      const diff = forecast - actual;
+      const pct = actual > 0 ? Math.round((diff / actual) * 100) : null;
+      const up = diff > 0;
+      const tc = pct === null ? '#94a3b8' : Math.abs(pct) < 5 ? '#94a3b8' : up ? '#ef4444' : '#10b981';
+      const ti = pct === null ? 'bi-dash-lg' : up ? 'bi-arrow-up-right' : 'bi-arrow-down-right';
+      const pctStr = pct !== null ? `${up ? '+' : ''}${pct}%` : 'New';
+      const barPct = totalForecast > 0 ? Math.round((forecast / totalForecast) * 100) : 0;
+      return `<div class="rpt-forecast-row">
+        <div class="rpt-forecast-cat">
+          <span class="rpt-forecast-dot" style="background:${P[i % P.length]}"></span>
+          <span>${cat}</span>
+        </div>
+        <div class="rpt-forecast-bar-cell">
+          <div class="rpt-forecast-bar-track">
+            <div class="rpt-forecast-bar-fill" style="width:${barPct}%;background:${P[i % P.length]}88"></div>
+          </div>
+        </div>
+        <div class="rpt-forecast-actual">${formatCurrency(actual)}</div>
+        <div class="rpt-forecast-projected" style="color:#8b5cf6;font-weight:600">${formatCurrency(forecast)}</div>
+        <div class="rpt-forecast-change" style="color:${tc}">
+          <i class="bi ${ti} me-1"></i>${pctStr}
+        </div>
+      </div>`;
+    });
+
+    tableEl.innerHTML = `
+      <div class="rpt-forecast-table-wrap">
+        <div class="rpt-forecast-head">
+          <div class="rpt-forecast-cat">Category</div>
+          <div class="rpt-forecast-bar-cell">Share</div>
+          <div class="rpt-forecast-actual">This Month</div>
+          <div class="rpt-forecast-projected">Forecast</div>
+          <div class="rpt-forecast-change">vs Actual</div>
+        </div>
+        ${rows.join('')}
+        <div class="rpt-forecast-total-row">
+          <div class="rpt-forecast-cat"><strong>Total</strong></div>
+          <div class="rpt-forecast-bar-cell"></div>
+          <div class="rpt-forecast-actual"><strong>${formatCurrency(curActuals.reduce((s, v) => s + v, 0))}</strong></div>
+          <div class="rpt-forecast-projected" style="color:#8b5cf6"><strong>${formatCurrency(totalForecast)}</strong></div>
+          <div class="rpt-forecast-change"></div>
+        </div>
+      </div>`;
+  }
+}
+
+
 
 function _bindPeriodFilter() {
   document.querySelectorAll('.rpt-period-btn').forEach(btn => {
@@ -801,12 +1172,215 @@ function _bindPeriodFilter() {
   });
 }
 
+// ─── Spending Diary ───────────────────────────────────────────────────────────
+
+const _now = new Date();
+const _diaryState = {
+  year:  _now.getFullYear(),
+  month: _now.getMonth(),
+  type:  'all',
+  search: '',
+};
+
+const _CAT_ICONS = {
+  Food:'🍔', Travel:'✈️', Utilities:'⚡', Shopping:'🛍️', Health:'💊',
+  Entertainment:'🎬', Education:'📚', Household:'🏠', 'Personal Care':'💆',
+  Kids:'🧒', Vehicle:'🚗', 'EMI / Loans':'🏦', Investments:'📈', Recharge:'📱',
+  Other:'📌', Salary:'💰', Freelance:'💻', Business:'🏢', Investment:'📊',
+  Gift:'🎁', Bonus:'🏅', Rent:'🏠', Dividend:'📉',
+};
+
+function _renderSpendingDiary() {
+  const container = _el('diary-body');
+  if (!container) return;
+
+  const { year, month, type, search } = _diaryState;
+  const ymStr = `${year}-${String(month + 1).padStart(2, '0')}`;
+  const today  = new Date().toISOString().slice(0, 10);
+
+  const monthLabel = _el('diary-month-label');
+  if (monthLabel) {
+    monthLabel.textContent = new Date(year, month, 1)
+      .toLocaleString('default', { month: 'long', year: 'numeric' });
+  }
+
+  const nextBtn = _el('diary-next-month');
+  const curNow  = new Date();
+  if (nextBtn) nextBtn.disabled =
+    year > curNow.getFullYear() ||
+    (year === curNow.getFullYear() && month >= curNow.getMonth());
+
+  let expenses = (store.get('expenses') ?? []).filter(e => (e.date ?? '').startsWith(ymStr));
+  let income   = (store.get('income')   ?? []).filter(i => (i.date ?? '').startsWith(ymStr));
+
+  const q = search.trim().toLowerCase();
+  if (q) {
+    expenses = expenses.filter(e =>
+      (e.description ?? '').toLowerCase().includes(q) ||
+      (e.category    ?? '').toLowerCase().includes(q));
+    income = income.filter(i =>
+      (i.description ?? '').toLowerCase().includes(q) ||
+      (i.source      ?? '').toLowerCase().includes(q));
+  }
+
+  const allTxns = [];
+  if (type !== 'income')  expenses.forEach(e => allTxns.push({ ...e, _type: 'expense' }));
+  if (type !== 'expense') income.forEach(i =>   allTxns.push({ ...i, _type: 'income'  }));
+
+  const totalExp = expenses.reduce((s, e) => s + (e.amount ?? 0), 0);
+  const totalInc = income.reduce((s,  i) => s + (i.amount  ?? 0), 0);
+  const net      = totalInc - totalExp;
+
+  const strip = _el('diary-summary-strip');
+  if (strip) {
+    strip.innerHTML = `
+      <div class="diary-stat">
+        <span class="diary-stat-label">Income</span>
+        <span class="diary-stat-val diary-stat-val--green">+${formatCurrency(totalInc)}</span>
+      </div>
+      <div class="diary-stat-div"></div>
+      <div class="diary-stat">
+        <span class="diary-stat-label">Expenses</span>
+        <span class="diary-stat-val diary-stat-val--red">\u2212${formatCurrency(totalExp)}</span>
+      </div>
+      <div class="diary-stat-div"></div>
+      <div class="diary-stat">
+        <span class="diary-stat-label">Net</span>
+        <span class="diary-stat-val" style="color:${net >= 0 ? '#10b981' : '#ef4444'}">${net >= 0 ? '+' : '\u2212'}${formatCurrency(Math.abs(net))}</span>
+      </div>
+      <div class="diary-stat-div"></div>
+      <div class="diary-stat">
+        <span class="diary-stat-label">Transactions</span>
+        <span class="diary-stat-val diary-stat-val--purple">${allTxns.length}</span>
+      </div>`;
+  }
+
+  if (allTxns.length === 0) {
+    container.innerHTML = `<div class="diary-empty">
+      <i class="bi bi-journal-x diary-empty-icon"></i>
+      <div class="diary-empty-title">No transactions found</div>
+      <div class="diary-empty-sub">${q ? 'Try a different search term' : 'No entries for this month'}</div>
+    </div>`;
+    return;
+  }
+
+  // Group by date
+  const grouped = {};
+  allTxns.forEach(t => {
+    const d = t.date ?? '';
+    if (!grouped[d]) grouped[d] = [];
+    grouped[d].push(t);
+  });
+
+  // Running cumulative net from oldest → newest
+  const allSorted = [...allTxns].sort((a, b) => (a.date ?? '').localeCompare(b.date ?? ''));
+  let running = 0;
+  const runByDate = {};
+  allSorted.forEach(t => {
+    running += t._type === 'income' ? (t.amount ?? 0) : -(t.amount ?? 0);
+    runByDate[t.date ?? ''] = running;
+  });
+
+  const sortedDates = Object.keys(grouped).sort((a, b) => b.localeCompare(a));
+
+  container.innerHTML = sortedDates.map(dateStr => {
+    const txns   = grouped[dateStr];
+    const dayExp = txns.filter(t => t._type === 'expense').reduce((s, t) => s + (t.amount ?? 0), 0);
+    const dayInc = txns.filter(t => t._type === 'income' ).reduce((s, t) => s + (t.amount ?? 0), 0);
+    const runBal = runByDate[dateStr] ?? 0;
+    const isToday = dateStr === today;
+
+    const d = new Date(dateStr + 'T00:00:00');
+    const dayLabel = isToday
+      ? 'Today'
+      : d.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' });
+
+    return `
+    <div class="diary-day-group">
+      <div class="diary-day-header">
+        <div class="diary-day-left">
+          <span class="diary-day-label${isToday ? ' diary-day-today' : ''}">${dayLabel}</span>
+          <span class="diary-day-count">${txns.length} txn${txns.length !== 1 ? 's' : ''}</span>
+        </div>
+        <div class="diary-day-right">
+          ${dayInc > 0 ? `<span class="diary-day-chip diary-day-chip--inc">+${formatCurrency(dayInc)}</span>` : ''}
+          ${dayExp > 0 ? `<span class="diary-day-chip diary-day-chip--exp">\u2212${formatCurrency(dayExp)}</span>` : ''}
+          <span class="diary-day-chip diary-day-chip--bal" style="color:${runBal >= 0 ? '#6366f1' : '#ef4444'}" title="Cumulative net this month">
+            <i class="bi bi-arrow-repeat" style="font-size:.6rem"></i> ${runBal >= 0 ? '+' : ''}${formatCurrency(runBal)}
+          </span>
+        </div>
+      </div>
+      <div class="diary-txn-list">
+        ${txns.sort((a, b) => (b.amount ?? 0) - (a.amount ?? 0)).map(t => {
+          const catOrSrc = t._type === 'income' ? (t.source ?? '') : (t.category ?? '');
+          const icon = _CAT_ICONS[catOrSrc] ?? (t._type === 'income' ? '💵' : '💸');
+          const desc = (t.description ?? '').trim() || catOrSrc;
+          const pm   = t.paymentMethod ?? t.receivedIn ?? '';
+          return `
+          <div class="diary-txn-row diary-txn-row--${t._type}">
+            <div class="diary-txn-icon">${icon}</div>
+            <div class="diary-txn-body">
+              <div class="diary-txn-name">${desc}</div>
+              <div class="diary-txn-meta">
+                <span class="diary-txn-cat">${catOrSrc}</span>
+                ${pm ? `<span class="diary-txn-pm">${pm}</span>` : ''}
+              </div>
+            </div>
+            <div class="diary-txn-amt diary-txn-amt--${t._type}">
+              ${t._type === 'income' ? '+' : '\u2212'}${formatCurrency(t.amount ?? 0)}
+            </div>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function _bindDiary() {
+  const prevBtn = _el('diary-prev-month');
+  const nextBtn = _el('diary-next-month');
+
+  const _go = (delta) => {
+    _diaryState.month += delta;
+    if (_diaryState.month < 0)  { _diaryState.month = 11; _diaryState.year--; }
+    if (_diaryState.month > 11) { _diaryState.month = 0;  _diaryState.year++; }
+    _renderSpendingDiary();
+  };
+
+  prevBtn?.addEventListener('click', () => _go(-1));
+  nextBtn?.addEventListener('click', () => _go(+1));
+
+  document.querySelectorAll('.diary-type-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.diary-type-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      _diaryState.type = btn.dataset.diaryType;
+      _renderSpendingDiary();
+    });
+  });
+
+  const searchEl = _el('diary-search');
+  if (searchEl) {
+    let _debounce;
+    searchEl.addEventListener('input', () => {
+      clearTimeout(_debounce);
+      _debounce = setTimeout(() => {
+        _diaryState.search = searchEl.value;
+        _renderSpendingDiary();
+      }, 250);
+    });
+  }
+}
+
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 export function render() {
   _renderKpi();
   _renderBudgetSummary();
+  _renderMoM();
+  _renderCategoryTrends();
   _renderSpendingDayTiers();
+  _renderSpendingDiary();
   _categoryTrend('rpt-cat-trend');
   _monthlySpend('rpt-monthly-spend');
   _paymentMethodDonut('rpt-pay-method');
@@ -817,6 +1391,7 @@ export function render() {
   _budgetUtil('rpt-budget-util');
   _lendingBalance('rpt-lending-bal');
   _subDonut('rpt-sub-donut');
+  _spendingForecast('rpt-forecast-bar');
 }
 
 export function renderVehicleInline() {
@@ -831,6 +1406,17 @@ export function renderBudgetInline() {
 
 export function init() {
   _bindPeriodFilter();
+  _bindDiary();
+
+  // Forecast period toggle (3M / 6M avg)
+  document.querySelectorAll('.rpt-forecast-period-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.rpt-forecast-period-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      _forecastMonths = parseInt(btn.dataset.forecastMonths, 10);
+      _spendingForecast('rpt-forecast-bar');
+    });
+  });
 
   // In-page section nav — scroll to section on click
   document.querySelectorAll('.rpt-nav-link[data-rpt-sec]').forEach(link => {

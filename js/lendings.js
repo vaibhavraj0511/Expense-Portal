@@ -190,6 +190,31 @@ async function _writeMirroredTx({ entryType, isSettlement, amount, date, account
   return id;
 }
 
+async function _updateMirroredTx(mirroredTxId, entryType, { amount, date, counterparty, accountRef }) {
+  if (!mirroredTxId) return;
+  const idx = parseInt(mirroredTxId);
+  if (isNaN(idx)) { console.warn('[lendings] mirroredTxId not found for update:', mirroredTxId); return; }
+
+  const usesExpenses = entryType === 'lent';
+  if (usesExpenses) {
+    const records = [...(store.get('expenses') ?? [])];
+    if (idx < 0 || idx >= records.length) { console.warn('[lendings] mirroredTxId out of range:', idx); return; }
+    records[idx] = { ...records[idx], date, amount, description: `Lent to ${counterparty}`, paymentMethod: accountRef || records[idx].paymentMethod };
+    try {
+      await writeAllRows(CONFIG.sheets.expenses, records.map(serializeExpense));
+      store.set('expenses', records);
+    } catch (err) { console.warn('[lendings] failed to update mirrored expense:', err); }
+  } else {
+    const records = [...(store.get('income') ?? [])];
+    if (idx < 0 || idx >= records.length) { console.warn('[lendings] mirroredTxId out of range:', idx); return; }
+    records[idx] = { ...records[idx], date, amount, description: `Borrowed from ${counterparty}`, receivedIn: accountRef || records[idx].receivedIn };
+    try {
+      await writeAllRows(CONFIG.sheets.income, records.map(serializeIncome));
+      store.set('income', records);
+    } catch (err) { console.warn('[lendings] failed to update mirrored income:', err); }
+  }
+}
+
 async function _deleteMirroredTx(mirroredTxId, entryType, isSettlement) {
   if (!mirroredTxId) return;
   const idx = parseInt(mirroredTxId);
@@ -407,11 +432,17 @@ function _openCounterpartyLedger(counterparty) {
     } else {
       bodyEl.innerHTML = `<div class="lend-ledger-list">${rowsWithBalance.map(r => {
       let typeLabel, typeColor, typeBg, icon;
-      if (r.type === 'lent')       { typeLabel='Lent';       typeColor='#059669'; typeBg='#dcfce7'; icon='bi-arrow-up-right'; }
-      else if (r.type === 'borrowed') { typeLabel='Borrowed'; typeColor='#dc2626'; typeBg='#fee2e2'; icon='bi-arrow-down-left'; }
-      else                          { typeLabel='Settlement'; typeColor='#6366f1'; typeBg='#ede9fe'; icon='bi-arrow-left-right'; }
+      if (r.type === 'lent')          { typeLabel='Lent';       typeColor='#059669'; typeBg='#dcfce7'; icon='bi-arrow-up-right'; }
+      else if (r.type === 'borrowed') { typeLabel='Borrowed';   typeColor='#dc2626'; typeBg='#fee2e2'; icon='bi-arrow-down-left'; }
+      else                            { typeLabel='Settlement'; typeColor='#6366f1'; typeBg='#ede9fe'; icon='bi-arrow-left-right'; }
       const balColor = r.runningBalance > 0 ? '#059669' : r.runningBalance < 0 ? '#dc2626' : '#94a3b8';
       const balLabel = r.runningBalance === 0 ? 'Settled' : formatCurrency(Math.abs(r.runningBalance));
+      const isEntry  = r.type === 'lent' || r.type === 'borrowed';
+      const actionBtns = isEntry ? `
+        <div style="display:flex;gap:4px;margin-top:4px">
+          <button class="ecard-btn lend-edit-entry-btn" data-entry-id="${r.entryId}" title="Edit" style="color:#6366f1;font-size:.75rem;padding:2px 6px"><i class="bi bi-pencil-fill"></i></button>
+          <button class="ecard-btn lend-delete-entry-btn" data-entry-id="${r.entryId}" title="Delete" style="color:#ef4444;font-size:.75rem;padding:2px 6px"><i class="bi bi-trash3-fill"></i></button>
+        </div>` : '';
       return `
       <div class="lend-tx-row">
         <div class="lend-tx-icon" style="background:${typeBg};color:${typeColor}"><i class="bi ${icon}"></i></div>
@@ -421,6 +452,7 @@ function _openCounterpartyLedger(counterparty) {
             ${r.note ? `<span class="lend-tx-note">${escapeHtml(r.note)}</span>` : ''}
           </div>
           <div class="lend-tx-date">${escapeHtml(formatDate(r.date))}</div>
+          ${actionBtns}
         </div>
         <div class="lend-tx-amounts">
           <div class="lend-tx-amount" style="color:${typeColor}">${formatCurrency(r.amount)}</div>
@@ -428,6 +460,13 @@ function _openCounterpartyLedger(counterparty) {
         </div>
       </div>`;
     }).join('')}</div>`;
+
+      bodyEl.querySelectorAll('.lend-edit-entry-btn').forEach(btn =>
+        btn.addEventListener('click', () => _startEditEntry(btn.dataset.entryId))
+      );
+      bodyEl.querySelectorAll('.lend-delete-entry-btn').forEach(btn =>
+        btn.addEventListener('click', () => _deleteEntry(btn.dataset.entryId))
+      );
     }
   }
 
@@ -656,6 +695,46 @@ function _renderNetSummary(entries, settlements) {
   if (oweEl)  oweEl.textContent  = formatCurrency(totalOwe);
 }
 
+// ─── Edit entry ──────────────────────────────────────────────────────────────
+
+let _lendEditingId = null;
+
+function _startEditEntry(id) {
+  const entry = (store.get('lendings') ?? []).find(e => e.id === id);
+  if (!entry) return;
+  _lendEditingId = id;
+
+  document.getElementById('lending-type').value         = entry.type;
+  document.getElementById('lending-counterparty').value = entry.counterparty;
+  document.getElementById('lending-amount').value       = entry.amount;
+  document.getElementById('lending-date').value         = entry.date;
+  document.getElementById('lending-note').value         = entry.note ?? '';
+
+  const titleEl = document.getElementById('oc-lending-label');
+  if (titleEl) titleEl.textContent = 'Edit Lending Entry';
+  const cancelBtn = document.getElementById('lending-cancel-edit');
+  if (cancelBtn) cancelBtn.classList.remove('d-none');
+  const submitBtn = document.querySelector('#lending-form [type="submit"]');
+  if (submitBtn) submitBtn.textContent = 'Update Entry';
+
+  const ledgerModal = document.getElementById('counterparty-ledger-modal');
+  if (ledgerModal) bootstrap.Modal.getInstance(ledgerModal)?.hide();
+  const modal = document.getElementById('oc-lending');
+  if (modal) bootstrap.Modal.getOrCreateInstance(modal).show();
+}
+
+function _resetLendingForm() {
+  _lendEditingId = null;
+  const form = document.getElementById('lending-form');
+  if (form) form.reset();
+  const titleEl = document.getElementById('oc-lending-label');
+  if (titleEl) titleEl.textContent = 'New Lending / Borrowing Entry';
+  const cancelBtn = document.getElementById('lending-cancel-edit');
+  if (cancelBtn) cancelBtn.classList.add('d-none');
+  const submitBtn = document.querySelector('#lending-form [type="submit"]');
+  if (submitBtn) submitBtn.textContent = 'Save Entry';
+}
+
 // ─── Settlement modal opener ──────────────────────────────────────────────────
 
 function _openSettlementModal(entryId) {
@@ -666,6 +745,61 @@ function _openSettlementModal(entryId) {
   if (hiddenField) hiddenField.value = entryId; // reset clears it
   hideModalError('settlement-error-banner');
   _populateAccountSelect('settlement-account');
+
+  const entries     = store.get('lendings')            ?? [];
+  const settlements = store.get('lendingSettlements')  ?? [];
+  const entry       = entries.find(e => e.id === entryId);
+  const hintEl      = document.getElementById('settlement-hint');
+  const amtInput    = document.getElementById('settlement-amount');
+  const maxBadge    = document.getElementById('settlement-max-badge');
+  const maxVal      = document.getElementById('settlement-max-val');
+
+  if (entry) {
+    const outstanding = computeOutstanding(entry, settlements);
+
+    // Auto-fill amount with the outstanding for this entry
+    if (amtInput) amtInput.value = outstanding > 0 ? outstanding.toFixed(2) : '';
+
+    // Show "Max: ₹X" badge that re-fills amount on click
+    if (maxBadge && maxVal) {
+      maxVal.textContent = formatCurrency(outstanding);
+      maxBadge.classList.remove('d-none');
+      maxBadge.onclick = () => { if (amtInput) { amtInput.value = outstanding.toFixed(2); amtInput.focus(); } };
+    }
+
+    // Build ordered breakdown of all outstanding entries for this person
+    const allOutstanding = entries
+      .filter(e => e.counterparty === entry.counterparty && computeOutstanding(e, settlements) > 0)
+      .sort((a, b) => a.date.localeCompare(b.date));
+
+    if (hintEl && allOutstanding.length > 1) {
+      const rows = allOutstanding.map((e, i) => {
+        const out    = computeOutstanding(e, settlements);
+        const isCur  = e.id === entryId;
+        const rowStyle = isCur
+          ? 'font-weight:600;color:#6366f1'
+          : 'opacity:.75';
+        const borderStyle = i < allOutstanding.length - 1
+          ? 'border-bottom:1px solid rgba(99,102,241,.15);margin-bottom:5px;padding-bottom:5px'
+          : '';
+        return `<div style="display:flex;justify-content:space-between;align-items:center;${borderStyle}">
+          <span style="${rowStyle}">${isCur ? '▶ ' : `${i + 1}. `}${e.date}${e.note ? ' · ' + escapeHtml(e.note) : ''}</span>
+          <span style="${rowStyle}">${formatCurrency(out)}${isCur ? ' ← now' : ''}</span>
+        </div>`;
+      }).join('');
+      hintEl.innerHTML = `<div style="font-weight:600;color:#6366f1;margin-bottom:8px">
+        <i class="bi bi-info-circle me-1"></i>${escapeHtml(entry.counterparty)} has ${allOutstanding.length} outstanding entries — settle in order:
+      </div><div style="max-height:160px;overflow-y:auto">${rows}</div>
+      <div style="margin-top:8px;opacity:.7">Amount is pre-filled for the current entry. Settle each entry separately.</div>`;
+      hintEl.classList.remove('d-none');
+    } else if (hintEl) {
+      hintEl.classList.add('d-none');
+    }
+  } else {
+    if (hintEl) hintEl.classList.add('d-none');
+    if (maxBadge) maxBadge.classList.add('d-none');
+  }
+
   const modal = document.getElementById('oc-settlement');
   if (modal) bootstrap.Modal.getOrCreateInstance(modal).show();
 }
@@ -677,6 +811,12 @@ function _bindLedgerForm() {
   if (!form) return;
 
   store.on('accounts', () => _populateAccountSelect('lending-account'));
+
+  // Cancel edit
+  document.getElementById('lending-cancel-edit')?.addEventListener('click', _resetLendingForm);
+
+  // Reset on modal close
+  document.getElementById('oc-lending')?.addEventListener('hidden.bs.modal', _resetLendingForm);
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -696,22 +836,42 @@ function _bindLedgerForm() {
       return;
     }
 
-    const id = crypto.randomUUID();
-    let mirroredTxId = '';
     try {
-      if (accountRef) {
-        mirroredTxId = await _writeMirroredTx({
-          entryType: type, isSettlement: false,
-          amount: parseFloat(amount), date, accountRef, counterparty,
-        });
+      if (_lendEditingId) {
+        // ── Edit mode: update fields, preserve id and mirrored tx ──
+        const entries = store.get('lendings') ?? [];
+        const existing = entries.find(e => e.id === _lendEditingId);
+        if (!existing) { showModalError('lending-error-banner', 'Entry not found.'); return; }
+        const record = { ...existing, type, counterparty, amount: parseFloat(amount), date, note };
+        const updated = entries.map(e => e.id === _lendEditingId ? record : e);
+        await writeAllRows(CONFIG.sheets.lendings, updated.map(serialize));
+        store.set('lendings', updated.filter(e => e.id));
+        if (existing.mirroredTxId) {
+          await _updateMirroredTx(existing.mirroredTxId, existing.type, {
+            amount: parseFloat(amount), date, counterparty, accountRef: existing.accountRef,
+          });
+        }
+        _resetLendingForm();
+        const modal = document.getElementById('oc-lending');
+        if (modal) bootstrap.Modal.getInstance(modal)?.hide();
+      } else {
+        // ── Add mode ──
+        const id = crypto.randomUUID();
+        let mirroredTxId = '';
+        if (accountRef) {
+          mirroredTxId = await _writeMirroredTx({
+            entryType: type, isSettlement: false,
+            amount: parseFloat(amount), date, accountRef, counterparty,
+          });
+        }
+        const record = { id, type, counterparty, amount: parseFloat(amount), date, accountRef, mirroredTxId, note };
+        await appendRow(CONFIG.sheets.lendings, serialize(record));
+        const rows = await fetchRows(CONFIG.sheets.lendings);
+        store.set('lendings', rows.map(deserialize).filter(r => r.id));
+        form.reset();
+        const modal = document.getElementById('oc-lending');
+        if (modal) bootstrap.Modal.getInstance(modal)?.hide();
       }
-      const record = { id, type, counterparty, amount: parseFloat(amount), date, accountRef, mirroredTxId, note };
-      await appendRow(CONFIG.sheets.lendings, serialize(record));
-      const rows = await fetchRows(CONFIG.sheets.lendings);
-      store.set('lendings', rows.map(deserialize).filter(r => r.id));
-      form.reset();
-      const modal = document.getElementById('oc-lending');
-      if (modal) bootstrap.Modal.getInstance(modal)?.hide();
     } catch (err) {
       showModalError('lending-error-banner', err.message ?? 'Failed to save. Please try again.');
     }

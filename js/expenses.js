@@ -11,11 +11,11 @@ import { createPaginator } from './paginate.js';
 import { showUndoToast } from './undo.js';
 
 // ─── Serialization (Task 5.1) ────────────────────────────────────────────────
-// Column order: A=date, B=category, C=subCategory, D=amount, E=description, F=paymentMethod
+// Column order: A=date, B=category, C=subCategory, D=amount, E=description, F=paymentMethod, G=tags
 
 /**
  * Converts an ExpenseRecord object to a row array for Google Sheets.
- * @param {{ date: string, category: string, subCategory: string, amount: number, description: string, paymentMethod: string }} record
+ * @param {{ date: string, category: string, subCategory: string, amount: number, description: string, paymentMethod: string, tags: string[] }} record
  * @returns {string[]}
  */
 export function serialize(record) {
@@ -26,13 +26,14 @@ export function serialize(record) {
     String(record.amount),
     record.description,
     record.paymentMethod,
+    (record.tags ?? []).join(','),
   ];
 }
 
 /**
  * Converts a raw Sheets row array to an ExpenseRecord object.
  * @param {string[]} row
- * @returns {{ date: string, category: string, subCategory: string, amount: number, description: string, paymentMethod: string }}
+ * @returns {{ date: string, category: string, subCategory: string, amount: number, description: string, paymentMethod: string, tags: string[] }}
  */
 export function deserialize(row) {
   return {
@@ -42,6 +43,7 @@ export function deserialize(row) {
     amount: parseFloat(row[3]) || 0,
     description: row[4] ?? '',
     paymentMethod: row[5] ?? '',
+    tags: row[6] ? row[6].split(',').map(t => t.trim()).filter(Boolean) : [],
   };
 }
 
@@ -86,6 +88,7 @@ function hideError() {
 const filterState = {
   categories: [],     // string[] — empty means "all"
   paymentMethods: [], // string[] — empty means "all"
+  tags: [],           // string[] — empty means "all"
   dateFrom: '',
   dateTo: '',
   search: '',         // free-text search on description + category
@@ -97,6 +100,7 @@ function applyFilters(records) {
   return records.filter(r => {
     if (filterState.categories.length > 0 && !filterState.categories.includes(r.category)) return false;
     if (filterState.paymentMethods.length > 0 && !filterState.paymentMethods.includes(r.paymentMethod)) return false;
+    if (filterState.tags.length > 0 && !filterState.tags.some(t => (r.tags ?? []).includes(t))) return false;
     if (filterState.dateFrom && r.date < filterState.dateFrom) return false;
     if (filterState.dateTo && r.date > filterState.dateTo) return false;
     if (q && !String(r.description ?? '').toLowerCase().includes(q) && !String(r.category ?? '').toLowerCase().includes(q)) return false;
@@ -209,10 +213,14 @@ function _getPaginator() {
               }
             }
             const pmIcon = _pmIcon(r.paymentMethod);
+            const tagsHtml = (r.tags ?? []).length > 0
+              ? `<div class="cpt-tags-row">${r.tags.map(t => `<span class="cpt-tag" data-tag="${escapeHtml(t)}">#${escapeHtml(t)}</span>`).join('')}</div>`
+              : '';
             return `<tr>
               <td>
                 <div class="cpt-desc-primary" title="${desc}">${desc}</div>
                 ${r.subCategory ? `<div class="cpt-desc-secondary">${escapeHtml(r.subCategory)}</div>` : ''}
+                ${tagsHtml}
               </td>
               <td>
                 <div class="cpt-cat-wrap">
@@ -244,6 +252,18 @@ function _getPaginator() {
         });
         container.querySelectorAll('[data-delete-idx]').forEach(btn => {
           btn.addEventListener('click', () => _deleteRecord(parseInt(btn.dataset.deleteIdx)));
+        });
+        // Click tag pill to filter by that tag
+        container.querySelectorAll('.cpt-tag[data-tag]').forEach(pill => {
+          pill.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const tag = pill.dataset.tag;
+            if (!filterState.tags.includes(tag)) {
+              filterState.tags.push(tag);
+              _updateTagBtnLabel(document.getElementById('expense-tag-btn'));
+              render();
+            }
+          });
         });
         // Sort column headers
         container.querySelector('#cpt-sort-date')?.addEventListener('click', () => {
@@ -372,9 +392,410 @@ export function init() {
   store.on('expenses', render);
 }
 
+// ─── Tag input helpers ────────────────────────────────────────────────────────
+
+/** Suggested tags shown in the autocomplete dropdown */
+const _SUGGESTED_TAGS = [
+  'reimbursable', 'tax-deductible', 'avoidable', 'essential', 'one-time',
+  'recurring', 'work', 'personal', 'family', 'emergency', 'discretionary',
+  'investment', 'gift', 'travel', 'medical',
+];
+
+// ─── Smart auto-tag detection engine ─────────────────────────────────────────
+
+/**
+ * Category → tags that are almost always relevant for that category.
+ * Keys are lowercase for case-insensitive matching.
+ */
+const _CAT_TAG_MAP = {
+  // Food & dining
+  'food':            ['essential', 'discretionary'],
+  'groceries':       ['essential'],
+  'restaurant':      ['discretionary', 'avoidable'],
+  'dining':          ['discretionary', 'avoidable'],
+  'cafe':            ['discretionary', 'avoidable'],
+  'coffee':          ['discretionary', 'avoidable'],
+  'swiggy':          ['discretionary', 'avoidable'],
+  'zomato':          ['discretionary', 'avoidable'],
+
+  // Transport
+  'transport':       ['essential'],
+  'travel':          ['travel'],
+  'fuel':            ['essential', 'vehicle'],
+  'petrol':          ['essential', 'vehicle'],
+  'cab':             ['discretionary'],
+  'uber':            ['discretionary'],
+  'ola':             ['discretionary'],
+  'auto':            ['essential'],
+  'metro':           ['essential'],
+  'bus':             ['essential'],
+  'flight':          ['travel', 'one-time'],
+  'train':           ['travel'],
+  'hotel':           ['travel', 'one-time'],
+
+  // Housing
+  'rent':            ['essential', 'recurring'],
+  'housing':         ['essential'],
+  'maintenance':     ['essential'],
+  'electricity':     ['essential', 'recurring'],
+  'water':           ['essential', 'recurring'],
+  'gas':             ['essential', 'recurring'],
+  'internet':        ['essential', 'recurring'],
+  'broadband':       ['essential', 'recurring'],
+
+  // Health & medical
+  'health':          ['essential', 'medical'],
+  'medical':         ['essential', 'medical'],
+  'medicine':        ['essential', 'medical'],
+  'pharmacy':        ['essential', 'medical'],
+  'doctor':          ['essential', 'medical'],
+  'hospital':        ['essential', 'medical'],
+  'gym':             ['discretionary', 'health'],
+  'fitness':         ['discretionary', 'health'],
+
+  // Education
+  'education':       ['essential', 'investment'],
+  'school':          ['essential'],
+  'college':         ['essential'],
+  'course':          ['investment', 'work'],
+  'books':           ['essential', 'investment'],
+  'tuition':         ['essential'],
+
+  // Shopping & personal
+  'shopping':        ['discretionary', 'avoidable'],
+  'clothing':        ['discretionary'],
+  'fashion':         ['discretionary', 'avoidable'],
+  'electronics':     ['discretionary', 'one-time'],
+  'gadgets':         ['discretionary', 'one-time'],
+  'personal care':   ['essential'],
+  'grooming':        ['discretionary'],
+  'salon':           ['discretionary', 'avoidable'],
+
+  // Entertainment
+  'entertainment':   ['discretionary', 'avoidable'],
+  'movies':          ['discretionary', 'avoidable'],
+  'games':           ['discretionary', 'avoidable'],
+  'sports':          ['discretionary'],
+  'events':          ['discretionary', 'one-time'],
+
+  // Subscriptions
+  'subscriptions':   ['recurring', 'discretionary'],
+  'netflix':         ['recurring', 'discretionary'],
+  'spotify':         ['recurring', 'discretionary'],
+  'amazon prime':    ['recurring', 'discretionary'],
+
+  // Finance & investment
+  'investment':      ['investment', 'essential'],
+  'insurance':       ['essential', 'recurring'],
+  'emi':             ['essential', 'recurring'],
+  'loan':            ['essential', 'recurring'],
+  'tax':             ['essential', 'tax-deductible'],
+  'savings':         ['investment', 'essential'],
+  'mutual fund':     ['investment'],
+  'sip':             ['investment', 'recurring'],
+
+  // Work & business
+  'work':            ['work', 'reimbursable'],
+  'office':          ['work'],
+  'business':        ['work', 'reimbursable'],
+  'client':          ['work', 'reimbursable'],
+  'conference':      ['work', 'reimbursable', 'one-time'],
+  'stationery':      ['work'],
+
+  // Gifts & social
+  'gift':            ['gift', 'one-time', 'discretionary'],
+  'donation':        ['gift', 'tax-deductible'],
+  'charity':         ['gift', 'tax-deductible'],
+  'wedding':         ['gift', 'one-time'],
+  'birthday':        ['gift', 'one-time'],
+
+  // Household
+  'household':       ['essential'],
+  'cleaning':        ['essential'],
+  'repair':          ['essential', 'one-time'],
+  'appliance':       ['essential', 'one-time'],
+
+  // Misc
+  'emergency':       ['emergency', 'one-time'],
+  'miscellaneous':   ['one-time'],
+  'misc':            ['one-time'],
+  'cc payment':      ['essential', 'recurring'],
+};
+
+/**
+ * Description keyword → tags.
+ * Checked as substring match (case-insensitive) against the description.
+ */
+const _DESC_TAG_MAP = [
+  // Reimbursable signals
+  { keywords: ['office', 'client', 'business trip', 'work trip', 'conference', 'team lunch', 'team dinner', 'company', 'reimburse', 'expense claim'], tags: ['reimbursable', 'work'] },
+  // Tax-deductible signals
+  { keywords: ['insurance', 'ppf', 'elss', 'nps', 'tax', '80c', '80d', 'donation', 'charity', 'school fee', 'tuition fee', 'medical bill', 'hospital bill'], tags: ['tax-deductible'] },
+  // Travel signals
+  { keywords: ['flight', 'hotel', 'airbnb', 'hostel', 'resort', 'trip', 'vacation', 'holiday', 'tour', 'visa', 'passport', 'airport', 'railway', 'bus ticket'], tags: ['travel', 'one-time'] },
+  // Recurring signals
+  { keywords: ['monthly', 'subscription', 'emi', 'rent', 'salary', 'premium', 'renewal', 'annual', 'yearly', 'quarterly', 'auto-debit', 'standing order'], tags: ['recurring'] },
+  // Emergency signals
+  { keywords: ['emergency', 'urgent', 'hospital', 'accident', 'repair', 'breakdown', 'ambulance'], tags: ['emergency'] },
+  // Avoidable signals
+  { keywords: ['impulse', 'unnecessary', 'luxury', 'splurge', 'treat', 'party', 'bar', 'pub', 'alcohol', 'cigarette', 'tobacco', 'gambling', 'casino'], tags: ['avoidable', 'discretionary'] },
+  // Investment signals
+  { keywords: ['mutual fund', 'sip', 'stock', 'share', 'equity', 'bond', 'fd', 'fixed deposit', 'ppf', 'nps', 'elss', 'gold', 'crypto'], tags: ['investment'] },
+  // Medical signals
+  { keywords: ['doctor', 'hospital', 'clinic', 'pharmacy', 'medicine', 'tablet', 'injection', 'surgery', 'dental', 'eye', 'lab test', 'blood test', 'scan', 'xray', 'x-ray'], tags: ['medical', 'essential'] },
+  // Gift signals
+  { keywords: ['gift', 'present', 'birthday', 'anniversary', 'wedding', 'baby shower', 'farewell', 'congratulations'], tags: ['gift', 'one-time'] },
+  // Family signals
+  { keywords: ['family', 'kids', 'child', 'school', 'parent', 'mom', 'dad', 'spouse', 'wife', 'husband'], tags: ['family'] },
+  // Essential signals
+  { keywords: ['grocery', 'vegetables', 'milk', 'bread', 'rice', 'dal', 'ration', 'water bill', 'electricity bill', 'gas bill'], tags: ['essential'] },
+];
+
+/**
+ * Compute auto-detected tags from category + description.
+ * Returns an array of { tag, reason } objects, sorted by confidence.
+ * @param {string} category
+ * @param {string} description
+ * @returns {{ tag: string, reason: string, source: 'category'|'description'|'history' }[]}
+ */
+function _detectTags(category, description) {
+  const catLower  = (category    ?? '').toLowerCase().trim();
+  const descLower = (description ?? '').toLowerCase().trim();
+  const found = new Map(); // tag → { reason, source, score }
+
+  const _add = (tag, reason, source, score) => {
+    if (!found.has(tag) || found.get(tag).score < score) {
+      found.set(tag, { reason, source, score });
+    }
+  };
+
+  // 1. Category-based detection
+  for (const [key, tags] of Object.entries(_CAT_TAG_MAP)) {
+    if (catLower.includes(key) || key.includes(catLower) && catLower.length > 2) {
+      tags.forEach(t => _add(t, `Category: ${category}`, 'category', 10));
+    }
+  }
+
+  // 2. Description keyword detection
+  for (const { keywords, tags } of _DESC_TAG_MAP) {
+    for (const kw of keywords) {
+      if (descLower.includes(kw)) {
+        tags.forEach(t => _add(t, `Keyword: "${kw}"`, 'description', 8));
+        break;
+      }
+    }
+  }
+
+  // 3. History-based: tags most commonly used with this category
+  const allExpenses = store.get('expenses') ?? [];
+  const catHistory = allExpenses.filter(e =>
+    e.category?.toLowerCase() === catLower && (e.tags ?? []).length > 0
+  );
+  if (catHistory.length > 0) {
+    const tagFreq = {};
+    catHistory.forEach(e => (e.tags ?? []).forEach(t => { tagFreq[t] = (tagFreq[t] ?? 0) + 1; }));
+    const total = catHistory.length;
+    Object.entries(tagFreq)
+      .filter(([, count]) => count / total >= 0.2) // used in ≥20% of this category's expenses
+      .forEach(([t, count]) => {
+        const pct = Math.round((count / total) * 100);
+        _add(t, `Used ${pct}% of the time in ${category}`, 'history', 6 + (count / total) * 4);
+      });
+  }
+
+  // 4. Description similarity: tags used on expenses with similar descriptions
+  if (descLower.length >= 3) {
+    const words = descLower.split(/\s+/).filter(w => w.length >= 3);
+    const similar = allExpenses.filter(e =>
+      (e.tags ?? []).length > 0 &&
+      words.some(w => (e.description ?? '').toLowerCase().includes(w))
+    );
+    const descTagFreq = {};
+    similar.forEach(e => (e.tags ?? []).forEach(t => { descTagFreq[t] = (descTagFreq[t] ?? 0) + 1; }));
+    Object.entries(descTagFreq)
+      .filter(([, count]) => count >= 2)
+      .forEach(([t, count]) => {
+        _add(t, `Common with similar descriptions`, 'history', 4 + Math.min(count, 5));
+      });
+  }
+
+  return [...found.entries()]
+    .map(([tag, meta]) => ({ tag, ...meta }))
+    .sort((a, b) => b.score - a.score);
+}
+
+/**
+ * Render the auto-tag suggestion chips below the tag input.
+ * Only shows tags not already added.
+ */
+function _renderAutoTagSuggestions(category, description) {
+  const panel = document.getElementById('expense-auto-tag-panel');
+  if (!panel) return;
+
+  const detected = _detectTags(category, description);
+  const existing = _getFormTags();
+  const toShow = detected.filter(d => !existing.includes(d.tag)).slice(0, 8);
+
+  if (!toShow.length) {
+    panel.innerHTML = '';
+    panel.classList.add('d-none');
+    return;
+  }
+
+  // Group by source for the label
+  const hasCat  = toShow.some(d => d.source === 'category');
+  const hasDesc = toShow.some(d => d.source === 'description');
+  const hasHist = toShow.some(d => d.source === 'history');
+  const sources = [hasCat && 'category', hasDesc && 'description', hasHist && 'history'].filter(Boolean);
+  const sourceLabel = sources.length === 1
+    ? { category: 'from category', description: 'from description', history: 'from your history' }[sources[0]]
+    : 'auto-detected';
+
+  panel.innerHTML = `
+    <div class="auto-tag-label">
+      <i class="bi bi-stars me-1"></i>Suggested <span class="auto-tag-source">${sourceLabel}</span>
+      <span class="auto-tag-hint">— click to add</span>
+    </div>
+    <div class="auto-tag-chips">
+      ${toShow.map(d => `
+        <button type="button" class="auto-tag-chip" data-tag="${escapeHtml(d.tag)}" title="${escapeHtml(d.reason)}">
+          <i class="bi bi-plus-sm"></i>#${escapeHtml(d.tag)}
+          <span class="auto-tag-source-badge auto-tag-source-badge--${d.source}">${d.source === 'category' ? 'cat' : d.source === 'description' ? 'desc' : 'hist'}</span>
+        </button>`).join('')}
+    </div>`;
+  panel.classList.remove('d-none');
+
+  panel.querySelectorAll('.auto-tag-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      _addFormTag(chip.dataset.tag);
+      chip.remove();
+      // Hide panel if no chips left
+      if (!panel.querySelector('.auto-tag-chip')) {
+        panel.innerHTML = '';
+        panel.classList.add('d-none');
+      }
+    });
+  });
+}
+
+
+/** Normalise a raw tag string: lowercase, replace spaces with hyphens, strip special chars */
+function _normaliseTag(raw) {
+  return raw.trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9\-_]/g, '');
+}
+
+/** Read current tags from the tag input widget */
+function _getFormTags() {
+  const container = document.getElementById('expense-tags-container');
+  if (!container) return [];
+  return Array.from(container.querySelectorAll('.tag-pill[data-tag]')).map(p => p.dataset.tag);
+}
+
+/** Render the tag pills inside the tag input widget */
+function _renderFormTags(tags) {
+  const container = document.getElementById('expense-tags-container');
+  if (!container) return;
+  // Remove existing pills (keep the input)
+  container.querySelectorAll('.tag-pill').forEach(p => p.remove());
+  const input = container.querySelector('.tag-input-field');
+  tags.forEach(tag => {
+    const pill = document.createElement('span');
+    pill.className = 'tag-pill';
+    pill.dataset.tag = tag;
+    pill.innerHTML = `#${escapeHtml(tag)}<button type="button" class="tag-pill-remove" aria-label="Remove tag ${tag}">&times;</button>`;
+    pill.querySelector('.tag-pill-remove').addEventListener('click', () => {
+      pill.remove();
+    });
+    container.insertBefore(pill, input);
+  });
+}
+
+/** Add a single tag to the form widget (deduplicates) */
+function _addFormTag(raw) {
+  const tag = _normaliseTag(raw);
+  if (!tag) return;
+  const existing = _getFormTags();
+  if (existing.includes(tag)) return;
+  _renderFormTags([...existing, tag]);
+}
+
+/** Bind the tag input widget interactions */
+function _bindTagInput() {
+  const container = document.getElementById('expense-tags-container');
+  const input = document.getElementById('expense-tag-input');
+  const dropdown = document.getElementById('expense-tag-suggestions');
+  if (!container || !input || !dropdown) return;
+
+  function _showSuggestions(query) {
+    const existing = _getFormTags();
+    const category = document.getElementById('expense-category')?.value ?? '';
+    const description = document.getElementById('expense-description')?.value ?? '';
+
+    // Smart pool: detected tags first, then all previously-used tags
+    const detected = _detectTags(category, description).map(d => d.tag);
+    const allExpenses = store.get('expenses') ?? [];
+    const usedTags = [...new Set(allExpenses.flatMap(e => e.tags ?? []))];
+    const pool = [...new Set([...detected, ...usedTags])].filter(t => !existing.includes(t));
+
+    const q = query.toLowerCase().trim();
+    const matches = q
+      ? pool.filter(t => t.includes(q)).slice(0, 8)
+      : pool.slice(0, 8);
+    if (!matches.length) { dropdown.classList.add('d-none'); return; }
+
+    // Label each match with its source
+    const detectedSet = new Set(detected);
+    dropdown.innerHTML = matches.map(t => {
+      const badge = detectedSet.has(t)
+        ? `<span class="tag-sugg-badge">auto</span>`
+        : '';
+      return `<div class="tag-suggestion-item" data-tag="${escapeHtml(t)}">#${escapeHtml(t)}${badge}</div>`;
+    }).join('');
+    dropdown.classList.remove('d-none');
+    dropdown.querySelectorAll('.tag-suggestion-item').forEach(item => {
+      item.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        _addFormTag(item.dataset.tag);
+        input.value = '';
+        dropdown.classList.add('d-none');
+        // Refresh auto-tag panel after adding
+        const cat  = document.getElementById('expense-category')?.value ?? '';
+        const desc = document.getElementById('expense-description')?.value ?? '';
+        _renderAutoTagSuggestions(cat, desc);
+        input.focus();
+      });
+    });
+  }
+
+  input.addEventListener('input', () => _showSuggestions(input.value));
+  input.addEventListener('focus', () => _showSuggestions(input.value));
+  input.addEventListener('blur', () => setTimeout(() => dropdown.classList.add('d-none'), 150));
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ',' || e.key === ' ') {
+      e.preventDefault();
+      const val = input.value.trim().replace(/,$/, '');
+      if (val) { _addFormTag(val); input.value = ''; }
+      dropdown.classList.add('d-none');
+    } else if (e.key === 'Backspace' && !input.value) {
+      // Remove last tag on backspace when input is empty
+      const pills = container.querySelectorAll('.tag-pill');
+      if (pills.length) pills[pills.length - 1].remove();
+    }
+  });
+
+  // Click on container focuses the input
+  container.addEventListener('click', (e) => {
+    if (e.target === container) input.focus();
+  });
+}
+
 function _bindForm() {
   const form = document.getElementById('expense-form');
   if (!form) return;
+
+  // Bind tag input widget
+  _bindTagInput();
 
   const categorySelect = form.querySelector('#expense-category');
   const subCategoryWrapper = document.getElementById('expense-subcategory-wrapper');
@@ -407,11 +828,30 @@ function _bindForm() {
   if (categorySelect) categorySelect.addEventListener('change', refreshSubCategories);
   store.on('subCategories', refreshSubCategories);
 
+  // Auto-tag detection: trigger when category or description changes
+  function _refreshAutoTags() {
+    const cat  = categorySelect?.value ?? '';
+    const desc = document.getElementById('expense-description')?.value ?? '';
+    _renderAutoTagSuggestions(cat, desc);
+  }
+  if (categorySelect) categorySelect.addEventListener('change', _refreshAutoTags);
+  const descInput = document.getElementById('expense-description');
+  if (descInput) {
+    let _descTimer;
+    descInput.addEventListener('input', () => {
+      clearTimeout(_descTimer);
+      _descTimer = setTimeout(_refreshAutoTags, 350);
+    });
+  }
+
   // Cancel edit
   if (cancelBtn) {
     cancelBtn.addEventListener('click', () => {
       _editingIndex = null;
       form.reset();
+      _renderFormTags([]);
+      const panel = document.getElementById('expense-auto-tag-panel');
+      if (panel) { panel.innerHTML = ''; panel.classList.add('d-none'); }
       if (subCategoryWrapper) subCategoryWrapper.classList.add('d-none');
       if (submitBtn) submitBtn.textContent = 'Add Expense';
       cancelBtn.classList.add('d-none');
@@ -464,7 +904,7 @@ function _bindForm() {
     if (!amtResult.valid) { showFieldError('expense-amount', amtResult.errors[0]); hasErrors = true; }
     if (hasErrors) return;
 
-    const record = { date, category, subCategory, amount: parseFloat(amount), description, paymentMethod };
+    const record = { date, category, subCategory, amount: parseFloat(amount), description, paymentMethod, tags: _getFormTags() };
 
     // Duplicate check (skip when force-saving)
     if (!_forceExpenseSave && _checkDuplicate(date, category, parseFloat(amount))) {
@@ -507,6 +947,9 @@ function _bindForm() {
         store.set('expenses', [...(store.get('expenses') ?? []), record]);
       }
       form.reset();
+      _renderFormTags([]);
+      const autoPanel = document.getElementById('expense-auto-tag-panel');
+      if (autoPanel) { autoPanel.innerHTML = ''; autoPanel.classList.add('d-none'); }
       if (subCategoryWrapper) subCategoryWrapper.classList.add('d-none');
       _hideDuplicateWarning();
       const modal = document.getElementById('oc-expense');
@@ -544,6 +987,11 @@ function _startEdit(idx) {
       if (subCategorySelect) subCategorySelect.value = r.subCategory ?? '';
       if (r.subCategory && subCategoryWrapper) subCategoryWrapper.classList.remove('d-none');
     }, 0);
+
+    // Restore tags
+    _renderFormTags(r.tags ?? []);
+    // Trigger auto-tag suggestions for the restored category/description
+    setTimeout(() => _renderAutoTagSuggestions(r.category ?? '', r.description ?? ''), 50);
 
     // Restore dependent payment selects
     restorePaymentSelects('expense-payment-type', 'expense-payment-method', r.paymentMethod, store);
@@ -676,11 +1124,45 @@ function _updateFilterSummary() {
   }
 }
 
+function _buildTagDropdown() {
+  const btn = document.getElementById('expense-tag-btn');
+  const menu = document.getElementById('expense-tag-menu');
+  if (!btn || !menu) return;
+  const allExpenses = store.get('expenses') ?? [];
+  const allTags = [...new Set(allExpenses.flatMap(e => e.tags ?? []))].sort((a, b) => a.localeCompare(b));
+  menu.innerHTML = allTags.length === 0
+    ? '<div class="fdd-empty">No tags used yet</div>'
+    : allTags.map(t => `
+      <label class="fdd-item">
+        <input type="checkbox" class="fdd-check" value="${escapeHtml(t)}" ${filterState.tags.includes(t) ? 'checked' : ''} />
+        <span>#${escapeHtml(t)}</span>
+      </label>`).join('');
+  menu.querySelectorAll('.fdd-check').forEach(cb => {
+    cb.addEventListener('change', () => {
+      filterState.tags = Array.from(menu.querySelectorAll('.fdd-check:checked')).map(c => c.value);
+      _updateTagBtnLabel(btn);
+      render();
+    });
+  });
+  _updateTagBtnLabel(btn);
+}
+
+function _updateTagBtnLabel(btn) {
+  if (!btn) return;
+  const n = filterState.tags.length;
+  btn.innerHTML = n === 0
+    ? '<i class="bi bi-tag me-1"></i>Tags <i class="bi bi-chevron-down ms-1 fdd-chevron"></i>'
+    : `<i class="bi bi-tag-fill me-1"></i>Tags <span class="fdd-count">${n}</span> <i class="bi bi-chevron-down ms-1 fdd-chevron"></i>`;
+  btn.classList.toggle('fdd-active', n > 0);
+}
+
 function _bindFilters() {
   const btn = document.getElementById('expense-cat-btn');
   const menu = document.getElementById('expense-cat-menu');
   const pmBtn = document.getElementById('expense-pm-btn');
   const pmMenu = document.getElementById('expense-pm-menu');
+  const tagBtn = document.getElementById('expense-tag-btn');
+  const tagMenu = document.getElementById('expense-tag-menu');
   const dateFrom = document.getElementById('expense-date-from');
   const dateTo = document.getElementById('expense-date-to');
   const clearBtn = document.getElementById('expense-clear-filters');
@@ -705,6 +1187,7 @@ function _bindFilters() {
   // Toggle dropdown
   _wireDropdown(btn, menu);
   _wireDropdown(pmBtn, pmMenu);
+  _wireDropdown(tagBtn, tagMenu);
 
   // Search (debounced)
   let _searchTimer = null;
@@ -766,13 +1249,16 @@ function _bindFilters() {
       dateTo?.classList.remove('is-invalid');
       filterState.categories = [];
       filterState.paymentMethods = [];
+      filterState.tags = [];
       filterState.dateFrom = '';
       filterState.dateTo = '';
       filterState.search = '';
       if (menu) menu.querySelectorAll('.fdd-check').forEach(c => (c.checked = false));
       if (pmMenu) pmMenu.querySelectorAll('.fdd-check').forEach(c => (c.checked = false));
+      if (tagMenu) tagMenu.querySelectorAll('.fdd-check').forEach(c => (c.checked = false));
       if (btn) _updateCatBtnLabel(btn);
       if (pmBtn) _updatePmBtnLabel(pmBtn);
+      if (tagBtn) _updateTagBtnLabel(tagBtn);
       presetBtns.forEach(b => b.classList.remove('exp-preset-btn--active'));
       render();
     });
@@ -780,7 +1266,9 @@ function _bindFilters() {
 
   _buildCategoryDropdown();
   _buildPaymentMethodDropdown();
+  _buildTagDropdown();
   store.on('expenseCategories', _buildCategoryDropdown);
   store.on('accounts', _buildPaymentMethodDropdown);
   store.on('creditCards', _buildPaymentMethodDropdown);
+  store.on('expenses', _buildTagDropdown);
 }

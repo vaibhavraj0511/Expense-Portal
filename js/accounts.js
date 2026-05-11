@@ -31,11 +31,26 @@ export function renderBalanceHistoryChart() {
     return;
   }
 
+  // Apply account filter
+  const filterSel = document.getElementById('acc-chart-filter');
+  const filterVal = filterSel?.value ?? 'all';
+  const filteredAccounts = filterVal === 'all' ? accounts : accounts.filter(a => a.name === filterVal);
+
+  // Apply range tab cutoff
+  const activeRange = document.querySelector('.acc-range-tab--active')?.dataset?.range ?? '6m';
+  let cutoffDate = null;
+  if (activeRange !== 'all') {
+    const months = activeRange === '1m' ? 1 : activeRange === '3m' ? 3 : 6;
+    const d = new Date();
+    d.setMonth(d.getMonth() - months);
+    cutoffDate = d.toISOString().slice(0, 10);
+  }
+
   // Collect all dated events per account
   const COLORS = ['#a78bfa','#34d399','#f87171','#fbbf24','#fb923c','#f472b6','#22d3ee','#4ade80'];
   const datasets = [];
 
-  accounts.forEach((a, ai) => {
+  filteredAccounts.forEach((a, ai) => {
     // Build list of {date, delta} events
     const events = [];
     income.filter(r => r.receivedIn === a.name && r.date).forEach(r => events.push({ date: r.date, delta: r.amount }));
@@ -108,7 +123,12 @@ export function renderBalanceHistoryChart() {
   canvas.style.display = '';
 
   // Collect all unique dates across all datasets for x-axis labels
-  const allDates = [...new Set(datasets.flatMap(d => d.labels ?? []))].sort();
+  let allDates = [...new Set(datasets.flatMap(d => d.labels ?? []))].sort();
+  // Apply range cutoff — trim dates before cutoff, but carry forward the last known balance before cutoff
+  if (cutoffDate) {
+    const datesInRange = allDates.filter(d => d >= cutoffDate);
+    allDates = datesInRange.length ? datesInRange : allDates.slice(-1);
+  }
   // Align each dataset's data to the common date axis
   const alignedDatasets = datasets.map(d => {
     const map = {};
@@ -116,42 +136,144 @@ export function renderBalanceHistoryChart() {
     return { ...d, data: allDates.map(date => map[date] ?? null), labels: undefined, spanGaps: true };
   });
 
+  // Determine per-account mode
+  const perAccount = document.getElementById('acc-chart-per-account')?.checked ?? false;
+
+  // Build final datasets
+  let finalDatasets;
+  if (perAccount) {
+    // Individual account lines with gradient fill
+    finalDatasets = alignedDatasets.map((d, i) => {
+      const ctx2 = canvas.getContext('2d');
+      const grad = ctx2.createLinearGradient(0, 0, 0, 320);
+      const hex = d.borderColor ?? '#a78bfa';
+      grad.addColorStop(0,   hex + '60');
+      grad.addColorStop(0.5, hex + '22');
+      grad.addColorStop(1,   hex + '00');
+      return { ...d, fill: true, backgroundColor: grad, tension: 0.45, pointRadius: 0, pointHoverRadius: 6, pointHoverBackgroundColor: hex, pointHoverBorderColor: '#fff', pointHoverBorderWidth: 2, borderWidth: 2.5 };
+    });
+  } else {
+    // Single total balance line — sum across all filtered accounts per date
+    const totalByDate = {};
+    alignedDatasets.forEach(d => {
+      allDates.forEach((date, i) => {
+        if (d.data[i] !== null) totalByDate[date] = (totalByDate[date] ?? 0) + d.data[i];
+      });
+    });
+    const totalData = allDates.map(d => totalByDate[d] ?? null);
+    const ctx2 = canvas.getContext('2d');
+    const grad = ctx2.createLinearGradient(0, 0, 0, 320);
+    grad.addColorStop(0,   'rgba(99,102,241,0.52)');
+    grad.addColorStop(0.4, 'rgba(99,102,241,0.18)');
+    grad.addColorStop(1,   'rgba(99,102,241,0.00)');
+    finalDatasets = [{
+      label: filterVal === 'all' ? 'Total Balance' : (filteredAccounts[0]?.name ?? 'Balance'),
+      data: totalData,
+      borderColor: '#6366f1',
+      backgroundColor: grad,
+      fill: true,
+      tension: 0.45,
+      pointRadius: 0,
+      pointHoverRadius: 7,
+      pointHoverBackgroundColor: '#6366f1',
+      pointHoverBorderColor: '#ffffff',
+      pointHoverBorderWidth: 2,
+      borderWidth: 3,
+      spanGaps: true,
+    }];
+    // Compute and update the stats strip
+    const statData  = totalData.filter(v => v !== null);
+    const latestStat = statData[statData.length - 1] ?? null;
+    const firstStat  = statData[0] ?? null;
+    const peakStat   = statData.length ? Math.max(...statData) : null;
+    const lowStat    = statData.length ? Math.min(...statData) : null;
+    const chgAmt     = latestStat !== null && firstStat !== null ? latestStat - firstStat : null;
+    const chgPct     = firstStat && Math.abs(firstStat) > 0 ? (chgAmt / Math.abs(firstStat)) * 100 : null;
+    const _sfmt = v => v !== null ? '\u20b9' + new Intl.NumberFormat('en-IN').format(Math.round(v)) : '\u2014';
+    const _sqs  = id => document.getElementById(id);
+    if (_sqs('acc-stat-latest')) _sqs('acc-stat-latest').textContent = _sfmt(latestStat);
+    if (_sqs('acc-stat-peak'))   _sqs('acc-stat-peak').textContent   = _sfmt(peakStat);
+    if (_sqs('acc-stat-low'))    _sqs('acc-stat-low').textContent    = _sfmt(lowStat);
+    if (_sqs('acc-stat-chg')) {
+      const chgEl = _sqs('acc-stat-chg');
+      if (chgAmt !== null) {
+        const sign   = chgAmt >= 0 ? '+' : '';
+        const pctStr = chgPct !== null ? ` (${sign}${chgPct.toFixed(1)}%)` : '';
+        chgEl.textContent = `${sign}${_sfmt(chgAmt)}${pctStr}`;
+        chgEl.className   = 'acc-chart-stat-val ' + (chgAmt >= 0 ? 'acc-chart-stat-val--up' : 'acc-chart-stat-val--down');
+      } else {
+        chgEl.textContent = '\u2014'; chgEl.className = 'acc-chart-stat-val';
+      }
+    }
+    const subEl = document.getElementById('acc-chart-subtitle');
+    if (subEl) subEl.textContent = '';
+  }
+
   if (_balanceChart) { _balanceChart.destroy(); _balanceChart = null; }
+
+  const _crosshairPlugin = {
+    id: 'accCrosshair',
+    afterDraw(chart) {
+      const active = chart.tooltip._active;
+      if (!active?.length) return;
+      const { ctx: c3, scales: { x: xS, y: yS } } = chart;
+      const xPos = active[0].element.x;
+      c3.save();
+      c3.beginPath();
+      c3.moveTo(xPos, yS.top);
+      c3.lineTo(xPos, yS.bottom);
+      c3.lineWidth = 1.5;
+      c3.strokeStyle = 'rgba(99,102,241,0.4)';
+      c3.setLineDash([5, 4]);
+      c3.stroke();
+      c3.restore();
+    },
+  };
 
   _balanceChart = new Chart(canvas, {
     type: 'line',
-    data: { labels: allDates, datasets: alignedDatasets },
+    data: { labels: allDates, datasets: finalDatasets },
+    plugins: [_crosshairPlugin],
     options: {
       responsive: true,
       maintainAspectRatio: false,
       spanGaps: true,
-      animation: { duration: 500 },
+      animation: { duration: 900, easing: 'easeInOutQuart' },
+      interaction: { mode: 'index', intersect: false },
       plugins: {
         legend: {
+          display: perAccount,
           position: 'top',
-          labels: { color: '#64748b', boxWidth: 10, padding: 14, usePointStyle: true },
+          labels: { color: '#64748b', boxWidth: 10, padding: 12, usePointStyle: true, font: { size: 11 } },
         },
         tooltip: {
-          backgroundColor: '#1e293b',
+          backgroundColor: 'rgba(15,23,42,0.93)',
           titleColor: '#f1f5f9',
-          bodyColor: '#94a3b8',
-          borderColor: 'rgba(226,232,240,0.8)',
+          bodyColor: '#cbd5e1',
+          borderColor: 'rgba(99,102,241,0.45)',
           borderWidth: 1,
-          padding: 10,
-          cornerRadius: 10,
-          callbacks: { label: ctx => ` ${ctx.dataset.label}: ₹${new Intl.NumberFormat('en-IN').format(ctx.parsed.y)}` },
+          padding: 13,
+          cornerRadius: 12,
+          displayColors: perAccount,
+          callbacks: {
+            title: items => {
+              const raw = items[0]?.label ?? '';
+              const dt  = new Date(raw + 'T00:00:00');
+              return isNaN(dt) ? raw : dt.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+            },
+            label: ctx => ` ${ctx.dataset.label}: \u20b9${new Intl.NumberFormat('en-IN').format(Math.round(ctx.parsed.y))}`,
+          },
         },
       },
       scales: {
         x: {
-          title: { display: true, text: 'Date', color: '#6b7280' },
-          ticks: { maxTicksLimit: 8, maxRotation: 45, color: '#94a3b8', font: { size: 11 } },
-          grid: { color: 'rgba(226,232,240,0.7)' },
+          ticks: { maxTicksLimit: 7, maxRotation: 0, color: '#94a3b8', font: { size: 11 } },
+          grid: { color: 'rgba(226,232,240,0.35)', drawBorder: false },
           border: { display: false },
         },
         y: {
-          ticks: { color: '#94a3b8', font: { size: 11 }, callback: v => '₹' + new Intl.NumberFormat('en-IN').format(v) },
-          grid: { color: 'rgba(226,232,240,0.7)' },
+          ticks: { color: '#94a3b8', font: { size: 11 }, callback: v => '\u20b9' + new Intl.NumberFormat('en-IN').format(v) },
+          grid: { color: 'rgba(226,232,240,0.35)', drawBorder: false },
           border: { display: false },
         },
       },
@@ -267,14 +389,43 @@ function _renderAccountRow(a) {
   const balance = computeBalance(a.name);
   const balanceClass = balance >= 0 ? 'text-success' : 'text-danger';
   const typeConfig = {
-    'Savings':  { icon: 'bi-piggy-bank-fill', bg: '#0ea5e9' },
-    'Current':  { icon: 'bi-briefcase-fill',  bg: '#6366f1' },
-    'Wallet':   { icon: 'bi-wallet2',          bg: '#10b981' },
-    'Cash':     { icon: 'bi-cash-stack',       bg: '#f59e0b' },
+    'Savings':  { icon: 'bi-piggy-bank-fill', bg: '#0ea5e9',  cls: 'acc-row--bank' },
+    'Current':  { icon: 'bi-briefcase-fill',  bg: '#6366f1',  cls: 'acc-row--bank' },
+    'Wallet':   { icon: 'bi-wallet2',          bg: '#10b981',  cls: 'acc-row--wallet' },
+    'Cash':     { icon: 'bi-cash-stack',       bg: '#f59e0b',  cls: 'acc-row--cash' },
   };
-  const tc = typeConfig[a.type] ?? { icon: 'bi-bank2', bg: '#64748b' };
+  const tc = typeConfig[a.type] ?? { icon: 'bi-bank2', bg: '#64748b', cls: 'acc-row--bank' };
+
+  // Month-over-month trend
+  const now = new Date();
+  const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0).toISOString().slice(0, 10);
+  const allExpenses  = store.get('expenses')  ?? [];
+  const allIncome    = store.get('income')    ?? [];
+  const allTransfers = store.get('transfers') ?? [];
+  const allCcPay     = store.get('ccPayments') ?? [];
+
+  function _balanceAt(dateStr) {
+    const init = a.initialBalance ?? 0;
+    const filterTo = r => r.date && r.date <= dateStr;
+    const inc  = allIncome.filter(r => r.receivedIn === a.name && filterTo(r)).reduce((s, r) => s + r.amount, 0);
+    const exp  = allExpenses.filter(r => r.paymentMethod === a.name && filterTo(r)).reduce((s, r) => s + r.amount, 0);
+    const tIn  = allTransfers.filter(r => r.destinationAccount === a.name && filterTo(r)).reduce((s, r) => s + r.amount, 0);
+    const tOut = allTransfers.filter(r => r.sourceAccount === a.name && filterTo(r)).reduce((s, r) => s + r.amount, 0);
+    const ccP  = allCcPay.filter(r => r.paidFromAccount === a.name && filterTo(r)).reduce((s, r) => s + r.amount, 0);
+    return init + inc + tIn - exp - tOut - ccP;
+  }
+
+  const balLastMonth = _balanceAt(lastMonthEnd);
+  const diff = balance - balLastMonth;
+  let trendHtml = '';
+  if (balLastMonth !== 0 || diff !== 0) {
+    const trendIcon  = diff >= 0 ? 'bi-arrow-up-short' : 'bi-arrow-down-short';
+    const trendColor = diff >= 0 ? '#10b981' : '#ef4444';
+    trendHtml = `<span class="acc-row-trend" style="color:${trendColor}"><i class="bi ${trendIcon}"></i>${formatCurrency(Math.abs(diff))}</span>`;
+  }
+
   return `
-    <div class="list-group-item acc-row d-flex align-items-center gap-3 py-2 px-3">
+    <div class="list-group-item acc-row ${tc.cls} d-flex align-items-center gap-3 py-2 px-3">
       <div class="acc-row-icon" style="background:${tc.bg}18;color:${tc.bg}">
         <i class="bi ${tc.icon}"></i>
       </div>
@@ -282,11 +433,21 @@ function _renderAccountRow(a) {
         <div class="fw-semibold text-truncate" style="font-size:.9rem">${escapeHtml(a.name)}</div>
         <div class="text-muted" style="font-size:.73rem;text-transform:capitalize">${escapeHtml(a.type)}</div>
       </div>
-      <span class="fw-bold ${balanceClass}" style="font-size:.9rem;white-space:nowrap">${formatCurrency(balance)}</span>
-      <div class="acc-row-actions d-flex align-items-center gap-1">
-        <button class="acc-action-btn acc-action-add" data-add-money="${escapeHtml(a.name)}" title="Add Money"><i class="bi bi-plus-lg"></i></button>
-        <button class="acc-action-btn acc-action-edit" data-edit-account="${escapeHtml(a.id)}" title="Edit"><i class="bi bi-pencil-fill"></i></button>
-        <button class="acc-action-btn acc-action-del" data-delete-account="${escapeHtml(a.id)}" title="Delete"><i class="bi bi-trash-fill"></i></button>
+      <div class="d-flex flex-column align-items-end" style="flex-shrink:0">
+        <span class="fw-bold ${balanceClass}" style="font-size:.95rem;white-space:nowrap">${formatCurrency(balance)}</span>
+        ${trendHtml}
+      </div>
+      <div class="d-flex align-items-center gap-1">
+        <button class="acc-action-btn acc-action-transfer" data-transfer-from="${escapeHtml(a.name)}" title="Transfer"><i class="bi bi-arrow-left-right"></i></button>
+        <div class="dropdown">
+          <button class="acc-row-menu-btn" data-bs-toggle="dropdown" aria-expanded="false" title="More actions"><i class="bi bi-three-dots-vertical"></i></button>
+          <ul class="dropdown-menu dropdown-menu-end shadow-sm" style="min-width:140px;font-size:.82rem">
+            <li><a class="dropdown-item" href="#" data-add-money="${escapeHtml(a.name)}"><i class="bi bi-plus-circle me-2 text-success"></i>Add Money</a></li>
+            <li><a class="dropdown-item" href="#" data-edit-account="${escapeHtml(a.id)}"><i class="bi bi-pencil me-2 text-primary"></i>Edit</a></li>
+            <li><hr class="dropdown-divider"></li>
+            <li><a class="dropdown-item text-danger" href="#" data-delete-account="${escapeHtml(a.id)}"><i class="bi bi-trash me-2"></i>Delete</a></li>
+          </ul>
+        </div>
       </div>
     </div>`;
 }
@@ -298,6 +459,211 @@ function _bindAccountListEvents(container) {
     btn.addEventListener('click', () => _startEditAccount(btn.dataset.editAccount)));
   container.querySelectorAll('[data-delete-account]').forEach(btn =>
     btn.addEventListener('click', () => _deleteAccount(btn.dataset.deleteAccount)));
+  container.querySelectorAll('[data-transfer-from]').forEach(btn =>
+    btn.addEventListener('click', () => _openTransferFrom(btn.dataset.transferFrom)));
+}
+
+function _openTransferFrom(accountName) {
+  const modal = document.getElementById('oc-transfer');
+  if (!modal) return;
+  // Pre-fill source and set today's date
+  const src = document.getElementById('transfer-source');
+  const dateEl = document.getElementById('transfer-date');
+  if (dateEl && !dateEl.value) dateEl.value = new Date().toISOString().slice(0, 10);
+  // Open modal first so dropdowns are populated
+  const bsModal = bootstrap.Modal.getOrCreate(modal);
+  bsModal.show();
+  // After modal is shown, set the source value
+  modal.addEventListener('shown.bs.modal', function onShown() {
+    modal.removeEventListener('shown.bs.modal', onShown);
+    if (src) {
+      src.value = accountName;
+      src.dispatchEvent(new Event('change'));
+    }
+  });
+}
+
+let _utilDonutChart = null;
+function _renderUtilDonut(pct) {
+  const canvas = document.getElementById('cc-util-donut');
+  const hintEl = document.getElementById('cc-util-hint');
+  const fillEl = document.getElementById('cc-util-bar-fill');
+  const pctEl  = document.getElementById('cc-util-donut-pct');
+  if (!canvas) return;
+  const color = pct >= 70 ? '#ef4444' : pct >= 30 ? '#f59e0b' : '#10b981';
+  if (pctEl) pctEl.textContent = pct.toFixed(0) + '%';
+  if (pctEl) pctEl.style.color = color;
+  if (fillEl) { fillEl.style.width = pct.toFixed(1) + '%'; fillEl.style.background = color; }
+  const label = pct >= 70 ? `High utilization — consider paying down balances.`
+               : pct >= 30 ? `Fair utilization — try to stay below 30%.`
+               : `Good utilization — you're in great shape!`;
+  if (hintEl) { hintEl.textContent = label; hintEl.style.color = color; }
+  if (_utilDonutChart) { _utilDonutChart.destroy(); _utilDonutChart = null; }
+  _utilDonutChart = new Chart(canvas, {
+    type: 'doughnut',
+    data: {
+      datasets: [{ data: [pct, Math.max(100 - pct, 0)], backgroundColor: [color, '#f1f5f9'],
+        borderWidth: 0, borderRadius: 4 }]
+    },
+    options: {
+      cutout: '72%', responsive: false, animation: { duration: 600 },
+      plugins: { legend: { display: false }, tooltip: { enabled: false } },
+    },
+  });
+}
+
+const _CC_CHIP_PALETTES = 6;
+function _renderCcRow(c, expenses, ccPayments, idx) {
+  const spent = expenses
+    .filter(e => e.paymentMethod === c.name && !_isBillPaymentExpense(e))
+    .reduce((s, e) => s + e.amount, 0);
+  const paid        = ccPayments.filter(p => p.cardName === c.name).reduce((s, p) => s + p.amount, 0);
+  const outstanding = Math.max(spent - paid, 0);
+  const available   = Math.max(c.creditLimit - outstanding, 0);
+  const pct         = c.creditLimit > 0 ? Math.min((outstanding / c.creditLimit) * 100, 100) : 0;
+  const overLimit   = outstanding > c.creditLimit;
+
+  const severityCls = pct >= 70 ? 'cc-card-row--red'   : pct >= 30 ? 'cc-card-row--amber' : 'cc-card-row--green';
+  const fillColor   = pct >= 70 ? '#ef4444' : pct >= 30 ? '#f59e0b' : '#10b981';
+  const pctBadgeCls = pct >= 70 ? 'cc-card-pct--red'   : pct >= 30 ? 'cc-card-pct--amber' : 'cc-card-pct--green';
+  const chipCls     = `cc-chip--${(idx ?? 0) % _CC_CHIP_PALETTES}`;
+
+  // Due date badge (in header)
+  let dueBadgeHtml = '';
+  if (c.dueDay) {
+    const daysUntil = _daysUntilNext(c.dueDay);
+    const badgeCls  = daysUntil <= 7 ? 'cc-due-badge--urgent' : daysUntil <= 14 ? 'cc-due-badge--normal' : 'cc-due-badge--default';
+    const label     = daysUntil === 0 ? 'Due Today' : `Due in ${daysUntil}d`;
+    dueBadgeHtml    = `<span class="cc-due-badge ${badgeCls}"><i class="bi bi-calendar-check me-1"></i>${label}</span>`;
+  }
+
+  // Cycle spend for info grid
+  let cycleCell = '';
+  if (c.billingCycleStart) {
+    const cycleDates = _getCurrentCycleDates(c.billingCycleStart);
+    if (cycleDates) {
+      const cycleSpend = _getCycleSpend(c.name, cycleDates.cycleStart, cycleDates.cycleEnd);
+      const daysLeft   = _getDaysUntilCycleEnd(cycleDates.cycleEnd);
+      const cpColor    = cycleSpend / c.creditLimit >= .9 ? '#ef4444' : cycleSpend / c.creditLimit >= .7 ? '#f59e0b' : '#10b981';
+      cycleCell = `<div class="cc-info-cell"><i class="bi bi-calendar3" style="color:${cpColor}"></i>
+        <span>Cycle: <strong style="color:${cpColor}">${formatCurrency(cycleSpend)}</strong> &middot; ${daysLeft}d left</span></div>`;
+    }
+  }
+  if (!cycleCell && c.billingCycleStart) {
+    const endDay = c.billingCycleStart === 1 ? 31 : c.billingCycleStart - 1;
+    cycleCell = `<div class="cc-info-cell"><i class="bi bi-arrow-repeat"></i><span>Cycle: ${_ordinal(c.billingCycleStart)}–${_ordinal(endDay)}</span></div>`;
+  }
+
+  // Last payment for info grid
+  const cardPayments = ccPayments.filter(p => p.cardName === c.name)
+    .sort((a, b) => (b.date > a.date ? 1 : -1));
+  let lastPayCell = '';
+  if (cardPayments.length > 0) {
+    const lp   = cardPayments[0];
+    const isCb = lp.type === 'cashback';
+    const lpColor = isCb ? '#10b981' : '#3b82f6';
+    lastPayCell = `<div class="cc-info-cell"><i class="bi ${isCb ? 'bi-gift-fill' : 'bi-check-circle-fill'}" style="color:${lpColor}"></i>
+      <span>${isCb ? 'Cashback' : 'Last paid'}: <strong>${formatCurrency(lp.amount)}</strong> · ${formatDate(lp.date)}</span></div>`;
+  }
+
+  // Compact payment history
+  const collapseId = `cc-pay-hist-${escapeHtml(c.id)}`;
+  const showMoreId = `cc-pay-more-${escapeHtml(c.id)}`;
+  const HIST_LIMIT = 5;
+  const _payRow = p => {
+    const isCb = p.type === 'cashback';
+    return `<div class="cc-pay-hist-row">
+      <span class="cc-pay-hist-date">${formatDate(p.date)}</span>
+      <span class="cc-pay-hist-amt ${isCb ? 'text-success' : 'text-primary'}">${isCb ? '+' : ''}${formatCurrency(p.amount)}</span>
+      <span class="cc-pay-hist-src">${isCb
+        ? `<span class="badge bg-success-subtle text-success"><i class="bi bi-gift-fill me-1"></i>Cashback</span>`
+        : `<i class="bi bi-bank me-1"></i>${escapeHtml(p.paidFromAccount)}`}</span>
+    </div>`;
+  };
+  const visRows = cardPayments.slice(0, HIST_LIMIT);
+  const hidRows = cardPayments.slice(HIST_LIMIT);
+  const payHistHtml = `
+    <div class="mt-2 pt-1" style="border-top:1px solid #f1f5f9">
+      <button class="btn btn-link btn-sm p-0 text-decoration-none text-secondary"
+              type="button" data-bs-toggle="collapse" data-bs-target="#${collapseId}" aria-expanded="false">
+        <i class="bi bi-clock-history me-1"></i>Payment History
+        ${cardPayments.length > 0 ? `<span class="badge bg-secondary ms-1">${cardPayments.length}</span>` : ''}
+      </button>
+      <div class="collapse mt-2" id="${collapseId}">
+        ${cardPayments.length === 0
+          ? `<p class="text-muted small mb-0"><i class="bi bi-info-circle me-1"></i>No payments recorded yet.</p>`
+          : `<div class="px-1">
+              ${visRows.map(_payRow).join('')}
+              ${hidRows.length > 0 ? `
+                <div id="${showMoreId}" class="d-none">${hidRows.map(_payRow).join('')}</div>
+                <div class="py-1 text-center">
+                  <button class="btn btn-link btn-sm p-0 text-decoration-none small text-secondary"
+                    onclick="(function(b,id){var el=document.getElementById(id);var h=el.classList.toggle('d-none');b.textContent=h?'Show ${hidRows.length} more\u2026':'Show less';})(this,'${showMoreId}')">
+                    Show ${hidRows.length} more&hellip;</button></div>` : ''}
+            </div>`
+        }
+      </div>
+    </div>`;
+
+  const availColor = overLimit ? '#ef4444' : '#10b981';
+  const availLabel = overLimit ? 'Over limit' : 'Available';
+
+  return `
+    <div class="cc-card-row ${severityCls}">
+      <div class="cc-card-header">
+        <div class="cc-chip-tile ${chipCls}">
+          <span class="cc-chip-initials">${c.name.split(/\s+/).filter(Boolean).slice(0,2).map(w=>w[0].toUpperCase()).join('')}</span>
+          <i class="bi bi-credit-card-fill cc-chip-icon"></i>
+        </div>
+        <div class="cc-card-header-info">
+          <div class="cc-card-name">${escapeHtml(c.name)}</div>
+          <div class="cc-card-name-sub">Limit: ${formatCurrency(c.creditLimit)}</div>
+        </div>
+        <div class="cc-card-header-right">
+          ${dueBadgeHtml}
+          <button class="cc-pay-btn" data-pay-cc="${escapeHtml(c.name)}" data-cc-outstanding="${outstanding}"><i class="bi bi-send-fill me-1"></i>Pay</button>
+          <div class="dropdown">
+            <button class="cc-menu-btn" data-bs-toggle="dropdown" aria-expanded="false" title="More"><i class="bi bi-three-dots-vertical"></i></button>
+            <ul class="dropdown-menu dropdown-menu-end shadow-sm" style="min-width:150px;font-size:.82rem">
+              <li><a class="dropdown-item py-2" href="#" data-cashback-cc="${escapeHtml(c.name)}"><i class="bi bi-gift-fill me-2 text-success"></i>Cashback</a></li>
+              <li><a class="dropdown-item py-2" href="#" data-edit-cc="${escapeHtml(c.id)}"><i class="bi bi-pencil me-2 text-primary"></i>Edit</a></li>
+              <li><hr class="dropdown-divider"></li>
+              <li><a class="dropdown-item py-2 text-danger" href="#" data-delete-cc="${escapeHtml(c.id)}"><i class="bi bi-trash me-2"></i>Delete</a></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="cc-avail-hero">
+        <div class="cc-avail-hero-val" style="color:${availColor}">${formatCurrency(available)}</div>
+        <div class="cc-avail-hero-sub">${availLabel} &nbsp;·&nbsp; <strong>${formatCurrency(outstanding)}</strong> used of ${formatCurrency(c.creditLimit)}</div>
+      </div>
+
+      <div class="cc-card-progress-row">
+        <div class="cc-card-progress-bar-wrap">
+          <div class="cc-card-progress-bar">
+            <div class="cc-card-progress-fill" style="width:${pct.toFixed(1)}%;background:${fillColor}"></div>
+          </div>
+        </div>
+        <span class="cc-card-pct-badge ${pctBadgeCls}">${pct.toFixed(0)}%</span>
+      </div>
+
+      <div class="cc-info-grid">
+        ${cycleCell}
+        ${lastPayCell}
+      </div>
+
+      ${payHistHtml}
+    </div>`;
+}
+
+function _populateChartFilter(accounts) {
+  const sel = document.getElementById('acc-chart-filter');
+  if (!sel) return;
+  const current = sel.value;
+  sel.innerHTML = '<option value="all">All Accounts</option>' +
+    accounts.map(a => `<option value="${escapeHtml(a.name)}">${escapeHtml(a.name)}</option>`).join('');
+  if (current && [...sel.options].some(o => o.value === current)) sel.value = current;
 }
 
 function showBanner(id) {
@@ -422,50 +788,97 @@ export function render() {
     const paid = ccPayments.filter(p => p.cardName === c.name).reduce((x, p) => x + p.amount, 0);
     return s + Math.max(spent - paid, 0);
   }, 0);
+  const totalCreditLimit = creditCards.reduce((s, c) => s + (Number(c.creditLimit) || 0), 0);
+  const bankBalance   = bankAccounts.reduce((s, a) => s + computeBalance(a.name), 0);
+  const walletBalance = wallets.reduce((s, a) => s + computeBalance(a.name), 0);
+  const cashBalance   = cashAccounts.reduce((s, a) => s + computeBalance(a.name), 0);
   const el = id => document.getElementById(id);
-  if (el('acc-stat-balance')) el('acc-stat-balance').textContent = formatCurrency(totalBalance);
-  if (el('acc-stat-cards')) el('acc-stat-cards').textContent = creditCards.length;
+
+  // Breakdown banner
+  if (el('acc-stat-balance')) el('acc-stat-balance').textContent = formatCurrency(bankBalance);
+  if (el('acc-stat-wallets')) el('acc-stat-wallets').textContent = formatCurrency(walletBalance);
+  if (el('acc-stat-cash'))    el('acc-stat-cash').textContent    = formatCurrency(cashBalance);
+  if (el('acc-stat-total'))   el('acc-stat-total').textContent   = formatCurrency(totalBalance);
+  if (el('acc-stat-cards'))   el('acc-stat-cards').textContent   = creditCards.length;
   if (el('acc-stat-credit-used')) el('acc-stat-credit-used').textContent = formatCurrency(totalCreditUsed);
-
-  const accountsList = document.getElementById('accounts-list');
-  const accountsEmpty = document.getElementById('accounts-empty-state');
-  if (accountsList) {
-    if (bankAccounts.length === 0) {
-      accountsList.innerHTML = '';
-      if (accountsEmpty) accountsEmpty.classList.remove('d-none');
-    } else {
-      if (accountsEmpty) accountsEmpty.classList.add('d-none');
-      accountsList.innerHTML = bankAccounts.map(a => _renderAccountRow(a)).join('');
-      _bindAccountListEvents(accountsList);
-    }
+  if (el('cc-stat-limit'))    el('cc-stat-limit').textContent    = formatCurrency(totalCreditLimit);
+  const totalAvailable = Math.max(totalCreditLimit - totalCreditUsed, 0);
+  const overallUtil    = totalCreditLimit > 0 ? Math.min((totalCreditUsed / totalCreditLimit) * 100, 100) : 0;
+  if (el('cc-stat-available'))   el('cc-stat-available').textContent   = formatCurrency(totalAvailable);
+  if (el('cc-stat-utilization')) el('cc-stat-utilization').textContent = overallUtil.toFixed(1) + '%';
+  _renderUtilDonut(overallUtil);
+  const dueSoonCount = creditCards.filter(c => c.dueDay && _daysUntilNext(c.dueDay) <= 7).length;
+  if (el('cc-stat-due-soon')) {
+    el('cc-stat-due-soon').textContent = dueSoonCount;
+    el('cc-stat-due-soon').style.color = dueSoonCount > 0 ? '#ef4444' : '';
   }
 
-  // Wallets
-  const walletsList = document.getElementById('wallets-list');
-  const walletsEmpty = document.getElementById('wallets-empty-state');
-  if (walletsList) {
-    if (wallets.length === 0) {
-      walletsList.innerHTML = '';
-      if (walletsEmpty) walletsEmpty.classList.remove('d-none');
-    } else {
-      if (walletsEmpty) walletsEmpty.classList.add('d-none');
-      walletsList.innerHTML = wallets.map(a => _renderAccountRow(a)).join('');
-      _bindAccountListEvents(walletsList);
-    }
+  // Breakdown proportion bar
+  const posTotal = Math.max(bankBalance, 0) + Math.max(walletBalance, 0) + Math.max(cashBalance, 0);
+  if (posTotal > 0) {
+    const pBank   = (Math.max(bankBalance, 0)   / posTotal * 100).toFixed(1);
+    const pWallet = (Math.max(walletBalance, 0) / posTotal * 100).toFixed(1);
+    const pCash   = (Math.max(cashBalance, 0)   / posTotal * 100).toFixed(1);
+    if (el('acc-bar-bank'))   el('acc-bar-bank').style.width   = pBank   + '%';
+    if (el('acc-bar-wallet')) el('acc-bar-wallet').style.width = pWallet + '%';
+    if (el('acc-bar-cash'))   el('acc-bar-cash').style.width   = pCash   + '%';
   }
 
-  // Cash
-  const cashList = document.getElementById('cash-list');
-  const cashEmpty = document.getElementById('cash-empty-state');
-  if (cashList) {
-    if (cashAccounts.length === 0) {
-      cashList.innerHTML = '';
-      if (cashEmpty) cashEmpty.classList.remove('d-none');
-    } else {
-      if (cashEmpty) cashEmpty.classList.add('d-none');
-      cashList.innerHTML = cashAccounts.map(a => _renderAccountRow(a)).join('');
-      _bindAccountListEvents(cashList);
-    }
+  // Combined empty state & list visibility
+  const allEmpty = accounts.length === 0;
+  const allEmptyEl = document.getElementById('acc-all-empty');
+  const listsContainer = document.getElementById('acc-lists-container');
+  const breakdownBanner = document.getElementById('acc-breakdown-banner');
+  if (allEmptyEl)      allEmptyEl.classList.toggle('d-none', !allEmpty);
+  if (listsContainer)  listsContainer.classList.toggle('d-none', allEmpty);
+  if (breakdownBanner) breakdownBanner.classList.toggle('d-none', allEmpty);
+
+  // Populate chart filter dropdown
+  _populateChartFilter(accounts);
+
+  // Update account count badge
+  const countEl = document.getElementById('acc-list-count');
+  if (countEl) countEl.textContent = accounts.length ? `${accounts.length} account${accounts.length > 1 ? 's' : ''}` : '';
+
+  // Unified list with section headers
+  const unifiedList = document.getElementById('acc-unified-list');
+  if (unifiedList) {
+    let html = '';
+    const _sectionHdr = (label, color, icon, modal, items) => {
+      const sectionTotal = items.reduce((s, a) => s + computeBalance(a.name), 0);
+      const countBadge = items.length ? `<span class="acc-section-hdr-count">${items.length}</span>` : '';
+      const totalStr = items.length ? `<span class="acc-section-hdr-total" style="color:${color}">${formatCurrency(sectionTotal)}</span>` : '';
+      return `<div class="acc-section-hdr">
+        <div class="acc-section-hdr-left">
+          <span class="acc-section-hdr-label" style="color:${color}"><i class="bi ${icon} me-1"></i>${label}</span>
+          ${countBadge}
+        </div>
+        <div class="acc-section-hdr-right">
+          ${totalStr}
+          <button class="acc-section-hdr-add" data-bs-toggle="modal" data-bs-target="${modal}" title="Add"><i class="bi bi-plus-lg"></i></button>
+        </div>
+      </div>`;
+    };
+    const _emptyRow = (msg) =>
+      `<div class="px-3 py-2 text-muted" style="font-size:.8rem">${msg}</div>`;
+
+    html += _sectionHdr('Bank Accounts', '#3b82f6', 'bi-bank2', '#oc-account', bankAccounts);
+    html += bankAccounts.length
+      ? bankAccounts.map(a => _renderAccountRow(a)).join('')
+      : _emptyRow('No bank accounts yet');
+
+    html += _sectionHdr('Wallets', '#10b981', 'bi-wallet2', '#oc-wallet', wallets);
+    html += wallets.length
+      ? wallets.map(a => _renderAccountRow(a)).join('')
+      : _emptyRow('No wallets yet');
+
+    html += _sectionHdr('Cash', '#f59e0b', 'bi-cash-stack', '#oc-cash', cashAccounts);
+    html += cashAccounts.length
+      ? cashAccounts.map(a => _renderAccountRow(a)).join('')
+      : _emptyRow('No cash yet');
+
+    unifiedList.innerHTML = html;
+    _bindAccountListEvents(unifiedList);
   }
 
   const cardsList = document.getElementById('credit-cards-list');
@@ -476,156 +889,17 @@ export function render() {
       if (cardsEmpty) cardsEmpty.classList.remove('d-none');
     } else {
       if (cardsEmpty) cardsEmpty.classList.add('d-none');
-      const expenses = store.get('expenses') ?? [];
+      const expenses   = store.get('expenses')   ?? [];
       const ccPayments = store.get('ccPayments') ?? [];
-      cardsList.innerHTML = creditCards.map(c => {
-        // Only count actual purchases — exclude bill-payment entries
-        const spent = expenses
-          .filter(e => e.paymentMethod === c.name && !_isBillPaymentExpense(e))
-          .reduce((s, e) => s + e.amount, 0);
-        const paid = ccPayments
-          .filter(p => p.cardName === c.name)
-          .reduce((s, p) => s + p.amount, 0);
-        const outstanding = Math.max(spent - paid, 0);
-        const available = Math.max(c.creditLimit - outstanding, 0);
-        const pct = c.creditLimit > 0 ? Math.min((outstanding / c.creditLimit) * 100, 100) : 0;
-        const barCls = pct >= 90 ? 'bg-danger' : pct >= 70 ? 'bg-warning' : 'bg-info';
-        const overLimit = outstanding > c.creditLimit;
-        
-        // Bill payment history for this card (display only, not included in any totals)
-        const cardPayments = ccPayments
-          .filter(p => p.cardName === c.name)
-          .sort((a, b) => (b.date > a.date ? 1 : b.date < a.date ? -1 : 0));
-        const collapseId  = `cc-pay-hist-${escapeHtml(c.id)}`;
-        const showMoreId  = `cc-pay-more-${escapeHtml(c.id)}`;
-        const HIST_LIMIT  = 5;
-        const _payRow = p => {
-          const isCb = p.type === 'cashback';
-          return `
-            <div class="list-group-item px-0 py-1 d-flex justify-content-between align-items-center" style="border-color:#f0f0f0">
-              <span class="text-muted" style="min-width:72px">${formatDate(p.date)}</span>
-              <span class="fw-semibold ${isCb ? 'text-success' : 'text-primary'}">${isCb ? '+' : ''}${formatCurrency(p.amount)}</span>
-              <span class="text-muted">
-                ${isCb
-                  ? `<span class="badge bg-success-subtle text-success me-1"><i class="bi bi-gift-fill"></i> Cashback</span>${p.source ? escapeHtml(p.source) : ''}`
-                  : `<i class="bi bi-bank me-1"></i>${escapeHtml(p.paidFromAccount)}`}
-              </span>
-            </div>`;
-        };
-        const visRows    = cardPayments.slice(0, HIST_LIMIT);
-        const hidRows    = cardPayments.slice(HIST_LIMIT);
-        const payHistHtml = `
-          <div class="mt-2 pt-2" style="border-top:1px solid #dee2e6">
-            <button class="btn btn-link btn-sm p-0 text-decoration-none text-secondary"
-                    type="button" data-bs-toggle="collapse" data-bs-target="#${collapseId}"
-                    aria-expanded="false">
-              <i class="bi bi-clock-history me-1"></i>Payment History
-              ${cardPayments.length > 0 ? `<span class="badge bg-secondary ms-1">${cardPayments.length}</span>` : ''}
-            </button>
-            <div class="collapse mt-2" id="${collapseId}">
-              ${cardPayments.length === 0
-                ? `<p class="text-muted small mb-0"><i class="bi bi-info-circle me-1"></i>No payments recorded yet. Use <strong>Pay Bill</strong> or <strong>+ Cashback</strong> to track history here.</p>`
-                : `<div class="list-group list-group-flush" style="font-size:0.8rem">
-                    ${visRows.map(_payRow).join('')}
-                    ${hidRows.length > 0 ? `
-                      <div id="${showMoreId}" class="d-none">${hidRows.map(_payRow).join('')}</div>
-                      <div class="py-1 text-center">
-                        <button class="btn btn-link btn-sm p-0 text-decoration-none small text-secondary"
-                          onclick="(function(b,id){var el=document.getElementById(id);var hidden=el.classList.toggle('d-none');b.textContent=hidden?'Show ${hidRows.length} more…':'Show less';})(this,'${showMoreId}')">
-                          Show ${hidRows.length} more…
-                        </button>
-                      </div>` : ''}
-                  </div>`
-              }
-            </div>
-          </div>`;
-
-        // Calculate current billing cycle spend
-        let cycleSpendHtml = '';
-        if (c.billingCycleStart) {
-          const cycleDates = _getCurrentCycleDates(c.billingCycleStart);
-          if (cycleDates) {
-            const cycleSpend = _getCycleSpend(c.name, cycleDates.cycleStart, cycleDates.cycleEnd);
-            const cyclePct = c.creditLimit > 0 ? Math.min((cycleSpend / c.creditLimit) * 100, 100) : 0;
-            const cycleBarCls = cyclePct >= 90 ? 'bg-danger' : cyclePct >= 70 ? 'bg-warning' : 'bg-success';
-            const daysLeft = _getDaysUntilCycleEnd(cycleDates.cycleEnd);
-            const cycleOverLimit = cycleSpend > c.creditLimit;
-            
-            cycleSpendHtml = `
-              <div class="mt-2 pt-2" style="border-top:1px solid #dee2e6">
-                <div class="d-flex justify-content-between align-items-center mb-1">
-                  <span class="small fw-semibold text-primary"><i class="bi bi-calendar3 me-1"></i>Current Cycle Spend</span>
-                  <span class="small text-muted">${daysLeft} day${daysLeft === 1 ? '' : 's'} left</span>
-                </div>
-                <div class="progress mb-1" style="height:6px">
-                  <div class="progress-bar ${cycleBarCls}" role="progressbar" style="width:${cyclePct.toFixed(1)}%"
-                       aria-valuenow="${cyclePct.toFixed(0)}" aria-valuemin="0" aria-valuemax="100"></div>
-                </div>
-                <div class="d-flex justify-content-between small">
-                  <span class="${cycleOverLimit ? 'text-danger fw-semibold' : 'text-primary'}">${formatCurrency(cycleSpend)} spent</span>
-                  <span class="${cyclePct >= 90 ? 'text-danger' : cyclePct >= 70 ? 'text-warning' : 'text-success'}">
-                    ${cyclePct.toFixed(0)}% of limit
-                  </span>
-                </div>
-              </div>`;
-          }
-        }
-        
-        return `
-          <div class="list-group-item">
-            <div class="d-flex justify-content-between align-items-center mb-1">
-              <span class="fw-semibold">${escapeHtml(c.name)}</span>
-              <div class="d-flex align-items-center gap-2">
-                <span class="small text-muted">Limit: ${formatCurrency(c.creditLimit)}</span>
-                <button class="btn btn-sm btn-outline-primary" data-edit-cc="${escapeHtml(c.id)}" title="Edit"><i class="bi bi-pencil-fill"></i></button>
-                <button class="btn btn-sm btn-outline-primary" data-pay-cc="${escapeHtml(c.name)}" data-cc-outstanding="${outstanding}">Pay Bill</button>
-                <button class="btn btn-sm btn-outline-success" data-cashback-cc="${escapeHtml(c.name)}" title="Record cashback / adjustment"><i class="bi bi-gift-fill me-1"></i>Cashback</button>
-                <button class="btn btn-sm btn-outline-danger" data-delete-cc="${escapeHtml(c.id)}" title="Delete"><i class="bi bi-trash-fill"></i></button>
-              </div>
-            </div>
-            <div class="progress mb-1" style="height:8px">
-              <div class="progress-bar ${barCls}" role="progressbar" style="width:${pct.toFixed(1)}%"
-                   aria-valuenow="${pct.toFixed(0)}" aria-valuemin="0" aria-valuemax="100"></div>
-            </div>
-            <div class="d-flex justify-content-between small">
-              <span class="text-danger">Outstanding: ${formatCurrency(outstanding)}</span>
-              <span class="${overLimit ? 'text-danger fw-semibold' : 'text-success'}">
-                ${overLimit ? 'Over limit by ' + formatCurrency(outstanding - c.creditLimit) : 'Available: ' + formatCurrency(available)}
-              </span>
-            </div>
-            ${cycleSpendHtml}
-            ${payHistHtml}
-            ${(() => {
-              const lines = [];
-              if (c.billingCycleStart) {
-                const endDay = c.billingCycleStart === 1 ? 31 : c.billingCycleStart - 1;
-                lines.push(`<span class="text-muted"><i class="bi bi-arrow-repeat me-1"></i>Cycle: ${_ordinal(c.billingCycleStart)} – ${_ordinal(endDay)}</span>`);
-              }
-              if (c.dueDay) {
-                const daysUntil = _daysUntilNext(c.dueDay);
-                const dueBadge = daysUntil <= 7
-                  ? `<span class="badge bg-warning text-dark ms-2">Due in ${daysUntil} day${daysUntil === 1 ? '' : 's'}</span>`
-                  : '';
-                lines.push(`<span class="text-muted"><i class="bi bi-calendar-check me-1"></i>Due: ${_ordinal(c.dueDay)} of each month${dueBadge}</span>`);
-              }
-              return lines.length ? `<div class="d-flex flex-wrap gap-3 small mt-1">${lines.join('')}</div>` : '';
-            })()}
-          </div>
-        `;
-      }).join('');
-
-      cardsList.querySelectorAll('[data-pay-cc]').forEach(btn => {
-        btn.addEventListener('click', () => _openPayCcModal(btn.dataset.payCc, parseFloat(btn.dataset.ccOutstanding)));
-      });
-      cardsList.querySelectorAll('[data-cashback-cc]').forEach(btn => {
-        btn.addEventListener('click', () => _openCashbackModal(btn.dataset.cashbackCc));
-      });
-      cardsList.querySelectorAll('[data-edit-cc]').forEach(btn => {
-        btn.addEventListener('click', () => _startEditCreditCard(btn.dataset.editCc));
-      });
-      cardsList.querySelectorAll('[data-delete-cc]').forEach(btn => {
-        btn.addEventListener('click', () => _deleteCreditCard(btn.dataset.deleteCc));
-      });
+      cardsList.innerHTML = creditCards.map((c, i) => _renderCcRow(c, expenses, ccPayments, i)).join('');
+      cardsList.querySelectorAll('[data-pay-cc]').forEach(btn =>
+        btn.addEventListener('click', () => _openPayCcModal(btn.dataset.payCc, parseFloat(btn.dataset.ccOutstanding))));
+      cardsList.querySelectorAll('[data-cashback-cc]').forEach(btn =>
+        btn.addEventListener('click', () => _openCashbackModal(btn.dataset.cashbackCc)));
+      cardsList.querySelectorAll('[data-edit-cc]').forEach(btn =>
+        btn.addEventListener('click', () => _startEditCreditCard(btn.dataset.editCc)));
+      cardsList.querySelectorAll('[data-delete-cc]').forEach(btn =>
+        btn.addEventListener('click', () => _deleteCreditCard(btn.dataset.deleteCc)));
     }
   }
 }
@@ -965,6 +1239,25 @@ export function init() {
   store.on('income',     renderBalanceHistoryChart);
   store.on('transfers',  renderBalanceHistoryChart);
   store.on('ccPayments', renderBalanceHistoryChart);
+
+  // Chart filter
+  document.getElementById('acc-chart-filter')?.addEventListener('change', renderBalanceHistoryChart);
+
+  // Per-account toggle
+  document.getElementById('acc-chart-per-account')?.addEventListener('change', () => {
+    const subEl = document.getElementById('acc-chart-subtitle');
+    if (subEl) subEl.textContent = '';
+    renderBalanceHistoryChart();
+  });
+
+  // Chart range tabs
+  document.getElementById('acc-range-tabs')?.addEventListener('click', e => {
+    const btn = e.target.closest('[data-range]');
+    if (!btn) return;
+    document.querySelectorAll('.acc-range-tab').forEach(t => t.classList.remove('acc-range-tab--active'));
+    btn.classList.add('acc-range-tab--active');
+    renderBalanceHistoryChart();
+  });
 }
 
 function _bindAccountForm() {

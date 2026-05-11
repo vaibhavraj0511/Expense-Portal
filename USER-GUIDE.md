@@ -12,6 +12,8 @@ Overview of your financial health. Read-only — no data entry here.
 - **Charts** = Monthly income vs expense, category breakdown, savings rate trend, spending heatmap
 - **Daily Spending Profile** = How many days this month you spent ₹0 / ₹1–₹99 / ₹100–₹499 / ₹500–₹999 / ₹1k–₹4.9k / ₹5000+, split by weekdays and weekends (see [Daily Spending Profile](#daily-spending-profile) below)
 - **Spending Insights** = Month-over-month changes per category
+- **Payment Reminders** = Upcoming bills, credit card due dates, and recurring transactions due within the selected window (7 / 14 / 30 days). CC reminders disappear automatically once you record a payment via the Pay button. Use the dropdown in the card header to change the look-ahead window.
+- **Credit Card Utilization** = Per-card outstanding vs limit progress bars for the current billing cycle
 
 ---
 
@@ -35,6 +37,20 @@ Manage bank accounts and credit cards.
 - **Account balance** changes automatically when you add expenses/income/transfers/lendings linked to it
 - **Credit Card**: tracks spent vs payments; net outstanding shows as a liability in Net Worth
 - You can manually adjust balance if needed
+
+### Credit Card fields
+| Field | What it does |
+|---|---|
+| **Credit Limit** | Sets the max limit; available credit = limit − outstanding |
+| **Billing Cycle Start** | Day of month your billing cycle begins (e.g. 1 = 1st of each month). Used to calculate cycle spend and the correct payment window for reminders |
+| **Due Day** | Day of month payment is due. Powers the **due date badge** on each card row and the **Payment Reminders** panel on the Dashboard Today tab |
+
+### How Payment Reminders work for Credit Cards
+- A reminder appears when the next due date is within the selected window (default 7 days)
+- Due dates are calculated **cross-month** — if today is the 28th and due day is the 3rd, the reminder correctly shows "Due in 5d" (not as overdue)
+- A reminder is **automatically suppressed** once a payment is recorded for that billing cycle — no manual dismissal needed
+- Paying via the **Pay** button on a card row records the payment, updates the store, and re-renders the reminders panel instantly
+- Cashback entries do **not** count as a bill payment — the reminder stays until an actual payment is made
 
 ---
 

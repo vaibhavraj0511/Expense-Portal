@@ -65,48 +65,94 @@ let _viewMaidId = null;
 let _viewYM     = localYM();
 let _editMaidId = null;
 
+// ─── Avatar / tenure helpers ─────────────────────────────────────────────────
+
+function _initials(name) {
+  return String(name ?? '').trim().split(/\s+/).slice(0, 2).map(w => w[0]?.toUpperCase() ?? '').join('');
+}
+
+function _avatarColor(name) {
+  const palette = [
+    ['#6366f1','#4338ca'], ['#10b981','#059669'], ['#f59e0b','#d97706'],
+    ['#ef4444','#dc2626'], ['#0ea5e9','#0284c7'], ['#8b5cf6','#7c3aed'],
+    ['#ec4899','#db2777'], ['#14b8a6','#0d9488'],
+  ];
+  let h = 0;
+  for (const c of String(name ?? '')) h = (h * 31 + c.charCodeAt(0)) & 0xFFFF;
+  const [from, to] = palette[h % palette.length];
+  return `linear-gradient(135deg,${from},${to})`;
+}
+
+function _tenure(joiningDate) {
+  if (!joiningDate) return '';
+  const months = (new Date().getFullYear() - new Date(joiningDate).getFullYear()) * 12
+    + (new Date().getMonth() - new Date(joiningDate).getMonth());
+  if (months < 1) return 'Just joined';
+  if (months < 12) return `${months}mo`;
+  const y = Math.floor(months / 12), m = months % 12;
+  return m > 0 ? `${y}y ${m}mo` : `${y}y`;
+}
+
 // ─── Maid card ────────────────────────────────────────────────────────────────
 
 function _renderMaidCard(maid, attendance) {
-  const curYM    = localYM();
-  const todayStr = localToday();
+  const curYM       = localYM();
+  const todayStr    = localToday();
   const daysInMonth = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).getDate();
+  const monthLabel  = new Date().toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
 
-  const monthAtt = attendance.filter(a => a.maidId === maid.id && a.date.startsWith(curYM));
-  const present  = monthAtt.filter(a => a.status === 'present').length;
-  const halfDay  = monthAtt.filter(a => a.status === 'half-day').length;
-  const absent   = monthAtt.filter(a => a.status === 'absent').length;
+  const monthAtt  = attendance.filter(a => a.maidId === maid.id && a.date.startsWith(curYM));
+  const present   = monthAtt.filter(a => a.status === 'present').length;
+  const halfDay   = monthAtt.filter(a => a.status === 'half-day').length;
+  const absent    = monthAtt.filter(a => a.status === 'absent').length;
   const effective = present + halfDay * 0.5;
-  const salaryEarned = maid.monthlySalary > 0
-    ? (effective / daysInMonth) * maid.monthlySalary
-    : 0;
+  const salaryEarned = maid.monthlySalary > 0 ? (effective / daysInMonth) * maid.monthlySalary : 0;
+  const attPct    = daysInMonth > 0 ? Math.round((effective / daysInMonth) * 100) : 0;
+  const barColor  = attPct >= 80 ? '#10b981' : attPct >= 60 ? '#f59e0b' : '#ef4444';
 
   const todayEntry = attendance.find(a => a.maidId === maid.id && a.date === todayStr);
   const todayBadge = todayEntry
     ? todayEntry.status === 'present'
-      ? `<span class="badge bg-success-subtle text-success ms-1">Present Today</span>`
+      ? `<span class="badge bg-success-subtle text-success">Present</span>`
       : todayEntry.status === 'half-day'
-      ? `<span class="badge bg-warning-subtle text-warning ms-1">Half-Day Today</span>`
-      : `<span class="badge bg-danger-subtle text-danger ms-1">Absent Today</span>`
-    : `<span class="badge bg-secondary-subtle text-secondary ms-1">Not Marked</span>`;
+      ? `<span class="badge bg-warning-subtle text-warning">Half-Day</span>`
+      : `<span class="badge bg-danger-subtle text-danger">Absent</span>`
+    : `<span class="badge bg-secondary-subtle text-secondary">Pending</span>`;
 
   const isViewing = _viewMaidId === maid.id;
+  const tenure    = _tenure(maid.joiningDate);
 
   return `
-  <div class="ma-maid-card${isViewing ? ' ma-maid-card--active' : ''}">
+  <div class="ma-maid-card${isViewing ? ' ma-maid-card--active' : ''}" data-cal-maid-id="${esc(maid.id)}">
     <div class="ma-maid-row1">
-      <span class="ma-maid-name">${esc(maid.name)}</span>
-      ${todayBadge}
-      ${maid.monthlySalary > 0 ? `<span class="ma-maid-salary ms-auto me-2">${fmt(maid.monthlySalary)}/mo</span>` : '<span class="ms-auto"></span>'}
-      <button class="btn btn-xs btn-outline-primary ma-view-btn" data-maid-id="${esc(maid.id)}" title="Calendar"><i class="bi bi-calendar3"></i></button>
-      <button class="btn btn-xs btn-outline-secondary ma-edit-btn" data-maid-id="${esc(maid.id)}" title="Edit"><i class="bi bi-pencil"></i></button>
-      <button class="btn btn-xs btn-outline-danger ma-delete-btn" data-maid-id="${esc(maid.id)}" title="Delete"><i class="bi bi-trash3"></i></button>
+      <div class="ma-maid-avatar" style="background:${_avatarColor(maid.name)}">${_initials(maid.name)}</div>
+      <div class="ma-maid-info">
+        <div class="ma-maid-name-row">
+          <span class="ma-maid-name">${esc(maid.name)}</span>
+          ${todayBadge}
+        </div>
+        <div class="ma-maid-meta">
+          ${maid.monthlySalary > 0 ? `<span class="ma-maid-salary"><i class="bi bi-wallet2 me-1"></i>${fmt(maid.monthlySalary)}/mo</span>` : ''}
+          ${tenure ? `<span class="ma-maid-tenure"><i class="bi bi-calendar3 me-1"></i>${tenure}</span>` : ''}
+        </div>
+      </div>
+      <div class="ma-maid-actions">
+        <button class="btn btn-xs btn-outline-secondary ma-edit-btn" data-maid-id="${esc(maid.id)}" title="Edit"><i class="bi bi-pencil"></i></button>
+        <button class="btn btn-xs btn-outline-danger ma-delete-btn" data-maid-id="${esc(maid.id)}" title="Delete"><i class="bi bi-trash3"></i></button>
+      </div>
+    </div>
+    <div class="ma-att-bar-header">
+      <span class="ma-att-pct-label">Attendance · ${monthLabel}</span>
+      <span class="ma-att-pct-value" style="color:${barColor}">${attPct}%</span>
+    </div>
+    <div class="ma-att-bar-wrap" title="${attPct}% attendance this month">
+      <div class="ma-att-bar-fill" style="width:${attPct}%;background:${barColor}"></div>
     </div>
     <div class="ma-maid-row2">
-      <span class="ma-pill ma-pill--present"><i class="bi bi-check-circle-fill me-1"></i>${present}</span>
-      <span class="ma-pill ma-pill--half"><i class="bi bi-circle-half me-1"></i>${halfDay}</span>
-      <span class="ma-pill ma-pill--absent"><i class="bi bi-x-circle-fill me-1"></i>${absent}</span>
-      ${maid.monthlySalary > 0 ? `<span class="ma-pill ma-pill--salary"><i class="bi bi-wallet2 me-1"></i>${fmt(salaryEarned)} earned</span>` : ''}
+      <span class="ma-pill ma-pill--present"><i class="bi bi-check-circle-fill me-1"></i>${present} Present</span>
+      <span class="ma-pill ma-pill--half"><i class="bi bi-circle-half me-1"></i>${halfDay} Half</span>
+      <span class="ma-pill ma-pill--absent"><i class="bi bi-x-circle-fill me-1"></i>${absent} Absent</span>
+      ${maid.monthlySalary > 0 ? `<span class="ma-pill ma-pill--salary"><i class="bi bi-wallet2 me-1"></i>${fmt(salaryEarned)}</span>` : ''}
     </div>
   </div>`;
 }
@@ -175,16 +221,30 @@ export function render() {
   const maids      = store.get('maids') ?? [];
   const attendance = store.get('maidAttendance') ?? [];
   const todayStr   = localToday();
+  const curYM      = localYM();
 
   const container = document.getElementById('ma-root');
   if (!container) return;
 
+  const el = id => document.getElementById(id);
+  const daysInMonth = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).getDate();
+
+  const totalSalaryEarned = maids.reduce((sum, maid) => {
+    if (!maid.monthlySalary) return sum;
+    const monthAtt = attendance.filter(a => a.maidId === maid.id && a.date.startsWith(curYM));
+    const pres = monthAtt.filter(a => a.status === 'present').length;
+    const half = monthAtt.filter(a => a.status === 'half-day').length;
+    return sum + ((pres + half * 0.5) / daysInMonth) * maid.monthlySalary;
+  }, 0);
+
   if (maids.length === 0) {
-    const el = id => document.getElementById(id);
     if (el('ma-stat-total'))    el('ma-stat-total').textContent    = 0;
     if (el('ma-stat-present'))  el('ma-stat-present').textContent  = 0;
     if (el('ma-stat-absent'))   el('ma-stat-absent').textContent   = 0;
     if (el('ma-stat-unmarked')) el('ma-stat-unmarked').textContent = 0;
+    if (el('ma-stat-salary'))   el('ma-stat-salary').textContent   = '₹0';
+    const heroSub = el('ma-hero-sub');
+    if (heroSub) heroSub.textContent = 'Track daily attendance for maids & household staff';
     container.innerHTML = `
     <div class="ep-empty-state">
       <div class="ep-es-icon-wrap" style="background:linear-gradient(135deg,#8b5cf6,#7c3aed);box-shadow:0 8px 32px rgba(139,92,246,.3)">
@@ -206,22 +266,32 @@ export function render() {
   const markedIds    = new Set(todayAtt.map(a => a.maidId));
   const notMarked    = maids.filter(m => !markedIds.has(m.id)).length;
 
-  const el = id => document.getElementById(id);
   if (el('ma-stat-total'))    el('ma-stat-total').textContent    = maids.length;
   if (el('ma-stat-present'))  el('ma-stat-present').textContent  = presentToday;
   if (el('ma-stat-absent'))   el('ma-stat-absent').textContent   = absentToday;
   if (el('ma-stat-unmarked')) el('ma-stat-unmarked').textContent = notMarked;
+  if (el('ma-stat-salary'))   el('ma-stat-salary').textContent   = fmt(totalSalaryEarned);
 
-  const viewMaid = _viewMaidId ? maids.find(m => m.id === _viewMaidId) : null;
-  const maidOptions = maids.map(m =>
-    `<option value="${esc(m.id)}">${esc(m.name)}</option>`
-  ).join('');
+  const totalMonthSalary = maids.reduce((s, m) => s + (m.monthlySalary || 0), 0);
+  if (el('ma-stat-total-sub'))    el('ma-stat-total-sub').textContent    = `${maids.length} on roster`;
+  if (el('ma-stat-present-sub'))  el('ma-stat-present-sub').textContent  = `${presentToday} of ${maids.length} marked`;
+  if (el('ma-stat-absent-sub'))   el('ma-stat-absent-sub').textContent   = `${absentToday} of ${maids.length} marked`;
+  if (el('ma-stat-unmarked-sub')) el('ma-stat-unmarked-sub').textContent = notMarked > 0 ? `${notMarked} yet to mark` : 'All marked ✓';
+  if (el('ma-stat-salary-sub'))   el('ma-stat-salary-sub').textContent   = totalMonthSalary > 0 ? `of ${fmt(totalMonthSalary)} total` : 'This month';
+
+  const heroSub = el('ma-hero-sub');
+  if (heroSub) {
+    const parts = [`${maids.length} staff`];
+    if (presentToday > 0) parts.push(`${presentToday} present today`);
+    if (notMarked > 0)    parts.push(`${notMarked} pending`);
+    heroSub.textContent = parts.join(' · ');
+  }
 
   container.innerHTML = `
+  ${_renderQuickMark(maids, attendance, todayStr)}
   <div class="card mb-3">
     <div class="card-header fw-semibold d-flex justify-content-between align-items-center">
-      Staff Members
-      <span class="badge bg-secondary-subtle text-secondary rounded-pill">${maids.length}</span>
+      <span><span class="ma-card-hd-icon" style="background:linear-gradient(135deg,#8b5cf6,#7c3aed)"><i class="bi bi-people-fill"></i></span>Staff Members <span class="badge bg-secondary-subtle text-secondary rounded-pill ms-1">${maids.length}</span></span>
     </div>
     <div class="card-body p-3">
       <div class="ma-maids-grid">
@@ -229,8 +299,6 @@ export function render() {
       </div>
     </div>
   </div>
-
-  ${_renderQuickMark(maids, attendance, todayStr)}
   `;
 
   _bindPageEvents(maids, attendance);
@@ -243,9 +311,15 @@ export function render() {
 function _renderQuickMark(maids, attendance, dateStr) {
   const attMap = {};
   attendance.filter(a => a.date === dateStr).forEach(a => { attMap[a.maidId] = a.status; });
+  const isToday = dateStr === localToday();
+  const pastWarn = !isToday ? `
+    <div class="ma-past-date-warn d-flex align-items-center gap-2 mb-2">
+      <i class="bi bi-exclamation-triangle-fill"></i>
+      <span>Editing attendance for <strong>${new Date(dateStr + 'T00:00').toLocaleDateString('en-IN', { weekday:'short', day:'numeric', month:'long', year:'numeric' })}</strong></span>
+    </div>` : '';
 
   return `
-  <div class="card mb-3">
+  <div class="card mb-3 ma-mark-card">
     <div class="card-header fw-semibold d-flex align-items-center gap-2">
       <i class="bi bi-pencil-square me-1 text-primary"></i>Mark Attendance
       <div class="ms-auto d-flex align-items-center gap-2">
@@ -254,14 +328,24 @@ function _renderQuickMark(maids, attendance, dateStr) {
       </div>
     </div>
     <div class="card-body p-2">
+      ${pastWarn}
+      <div class="ma-all-present-bar">
+        <button class="btn ma-all-present-btn" id="ma-mark-all-present">
+          <i class="bi bi-check2-all me-1"></i>Mark All as Present
+        </button>
+      </div>
       <div class="ma-quick-grid">
         ${maids.map(m => {
-          const status  = attMap[m.id] ?? null;
-          const pCls    = status === 'present'  ? 'btn-success'         : 'btn-outline-success';
-          const hCls    = status === 'half-day' ? 'btn-warning text-dark': 'btn-outline-warning';
-          const aCls    = status === 'absent'   ? 'btn-danger'          : 'btn-outline-danger';
+          const status    = attMap[m.id] ?? null;
+          const statusCls = status === 'present'  ? 'ma-quick-row--present'
+                          : status === 'half-day' ? 'ma-quick-row--half'
+                          : status === 'absent'   ? 'ma-quick-row--absent' : '';
+          const pCls      = status === 'present'  ? 'btn-success'          : 'btn-outline-success';
+          const hCls      = status === 'half-day' ? 'btn-warning text-dark' : 'btn-outline-warning';
+          const aCls      = status === 'absent'   ? 'btn-danger'           : 'btn-outline-danger';
           return `
-          <div class="ma-quick-row" id="ma-qrow-${esc(m.id)}">
+          <div class="ma-quick-row ${statusCls}" id="ma-qrow-${esc(m.id)}">
+            <div class="ma-quick-avatar" style="background:${_avatarColor(m.name)}">${_initials(m.name)}</div>
             <span class="ma-quick-name">${esc(m.name)}</span>
             <div class="btn-group btn-group-sm ma-quick-btns">
               <button class="btn ${pCls} ma-quick-btn" data-maid-id="${esc(m.id)}" data-status="present"><i class="bi bi-check-lg"></i><span class="ma-quick-lbl"> Present</span></button>
@@ -333,23 +417,42 @@ function _bindPageEvents(maids, attendance) {
     btn.addEventListener('click', () => _deleteMaid(btn.dataset.maidId));
   });
 
-  // Quick mark: date change re-renders the quick panel
+  // Mark All Present
+  document.getElementById('ma-mark-all-present')?.addEventListener('click', async () => {
+    const btn  = document.getElementById('ma-mark-all-present');
+    const date = document.getElementById('ma-quick-date')?.value || localToday();
+    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Marking…'; }
+    for (const m of maids) await _saveQuickAttendance(m.id, date, 'present');
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-check2-all me-1"></i>All Present'; }
+  });
+
+  // Quick mark: date change re-renders grid + past-date warning
   document.getElementById('ma-quick-date')?.addEventListener('change', e => {
     const date = e.target.value;
     if (!date) return;
-    const panel = document.querySelector('.ma-quick-grid')?.closest('.card');
-    if (!panel) return;
-    const body = panel.querySelector('.card-body');
-    if (body) body.innerHTML = _renderQuickMark(maids, store.get('maidAttendance') ?? [], date)
-      .replace(/.*<div class="card-body p-2">/, '').replace(/<\/div>\s*<\/div>\s*$/, '');
-    // Simpler: just swap the inner grid
-    const newHtml = _renderQuickMark(maids, store.get('maidAttendance') ?? [], date);
     const tmp = document.createElement('div');
-    tmp.innerHTML = newHtml;
+    tmp.innerHTML = _renderQuickMark(maids, store.get('maidAttendance') ?? [], date);
     const newGrid = tmp.querySelector('.ma-quick-grid');
     const oldGrid = document.querySelector('.ma-quick-grid');
     if (newGrid && oldGrid) oldGrid.replaceWith(newGrid);
+    const newWarn = tmp.querySelector('.ma-past-date-warn');
+    const oldWarn = document.querySelector('.ma-past-date-warn');
+    if (newWarn && oldWarn)       oldWarn.replaceWith(newWarn);
+    else if (newWarn && !oldWarn) document.querySelector('.ma-quick-grid')?.insertAdjacentElement('beforebegin', newWarn);
+    else if (!newWarn && oldWarn) oldWarn.remove();
     _bindQuickButtons(date);
+  });
+
+  // Clicking a staff card (outside buttons) opens calendar modal
+  document.querySelectorAll('.ma-maid-card[data-cal-maid-id]').forEach(card => {
+    card.addEventListener('click', e => {
+      if (e.target.closest('button')) return;
+      const maid = maids.find(m => m.id === card.dataset.calMaidId);
+      if (!maid) return;
+      _viewMaidId = maid.id;
+      _viewYM = localYM();
+      _showCalModal(maid, attendance);
+    });
   });
 
   _bindQuickButtons(localToday());
