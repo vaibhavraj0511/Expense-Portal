@@ -53,6 +53,7 @@ let _rows = [];
 let _loaded = false;
 let _searchQuery = '';
 let _sectionOrder = [];
+let _metaMap = {};      // { [sectionId]: { name, type } } — for empty sections
 let _activeTab = 'all'; // 'all' | section type key
 let _pageState = {};    // { [tabKey]: pageIndex } — 0-based
 const PAGE_SIZE = 3;    // sections per page
@@ -64,18 +65,57 @@ let _pendingRename        = null; // sectionId
 // ─── API helpers ──────────────────────────────────────────────────────────────
 async function _load() {
   const raw = await fetchRows(SHEET);
-  _rows = raw.map(deserialize).filter(r => r.id && r.fieldKey !== '_meta');
-  // Build initial order from appearance
+  const all = raw.map(deserialize).filter(r => r.id);
+
+  // Rebuild section order from _meta rows first (preserves order for empty sections),
+  // then fall back to data rows for sections that predate the _meta convention.
   const seen = new Set();
   _sectionOrder = [];
-  for (const r of _rows) {
-    if (!seen.has(r.sectionId)) { seen.add(r.sectionId); _sectionOrder.push(r.sectionId); }
+
+  // Pass 1: _meta rows define canonical order + section identity
+  for (const r of all) {
+    if (r.fieldKey === '_meta' && !seen.has(r.sectionId)) {
+      seen.add(r.sectionId);
+      _sectionOrder.push(r.sectionId);
+    }
   }
+  // Pass 2: data rows for sections not yet seen (legacy rows without _meta)
+  for (const r of all) {
+    if (r.fieldKey !== '_meta' && !seen.has(r.sectionId)) {
+      seen.add(r.sectionId);
+      _sectionOrder.push(r.sectionId);
+    }
+  }
+
+  // Keep only data rows in _rows (meta rows are reconstructed on save)
+  _rows = all.filter(r => r.fieldKey !== '_meta');
+
+  // Rebuild section name/type map from _meta rows so empty sections are known
+  _metaMap = {};
+  for (const r of all) {
+    if (r.fieldKey === '_meta') {
+      _metaMap[r.sectionId] = { name: r.sectionName, type: r.sectionType };
+    }
+  }
+
   _loaded = true;
 }
 
 async function _save() {
-  await writeAllRows(SHEET, _rows.map(serialize));
+  // Write _meta sentinel rows for every known section (preserves empty sections)
+  const sections = _getSections();
+  const metaRows = sections.map(sec => ({
+    id: `meta_${sec.id}`,
+    sectionId: sec.id,
+    sectionName: sec.name,
+    sectionType: sec.type,
+    fieldKey: '_meta',
+    fieldValue: '',
+    extra: '',
+    createdAt: '',
+    updatedAt: _now(),
+  }));
+  await writeAllRows(SHEET, [...metaRows, ..._rows].map(serialize));
 }
 
 function _now()  { return new Date().toISOString(); }
@@ -84,10 +124,19 @@ function _uuid() { return crypto.randomUUID(); }
 // ─── Section helpers ──────────────────────────────────────────────────────────
 function _getSections() {
   const map = new Map();
+
+  // First populate from data rows
   for (const r of _rows) {
     if (!map.has(r.sectionId))
       map.set(r.sectionId, { id: r.sectionId, name: r.sectionName, type: r.sectionType });
   }
+
+  // Also include sections known only from _metaMap (empty sections)
+  for (const [sectionId, meta] of Object.entries(_metaMap)) {
+    if (!map.has(sectionId))
+      map.set(sectionId, { id: sectionId, name: meta.name, type: meta.type });
+  }
+
   // Return in _sectionOrder, append any not yet in order list
   const ordered = _sectionOrder.filter(id => map.has(id)).map(id => map.get(id));
   for (const [id, sec] of map) { if (!_sectionOrder.includes(id)) ordered.push(sec); }
@@ -718,6 +767,7 @@ export async function init() {
     bootstrap.Modal.getInstance(document.getElementById('vault-del-section-modal'))?.hide();
     _rows = _rows.filter(r => r.sectionId !== sectionId);
     _sectionOrder = _sectionOrder.filter(id => id !== sectionId);
+    delete _metaMap[sectionId];
     await _save();
     _showToast('Section deleted.');
     _render();
@@ -744,6 +794,7 @@ export async function init() {
     _pendingRename = null;
     bootstrap.Modal.getInstance(document.getElementById('vault-rename-modal'))?.hide();
     _rows = _rows.map(r => r.sectionId === sectionId ? { ...r, sectionName: newName, updatedAt: _now() } : r);
+    if (_metaMap[sectionId]) _metaMap[sectionId].name = newName;
     await _save();
     _showToast('Section renamed.');
     _render();
@@ -761,11 +812,12 @@ export async function init() {
     if (!name) { _showToast('Section name is required.'); return; }
     const sectionId = _uuid();
     _sectionOrder.push(sectionId);
-    // For note/custom create an empty content row so the section is discoverable without _meta
+    // Register in metaMap so the section is visible even before any data rows exist
+    _metaMap[sectionId] = { name, type };
+    // For note/custom also create an empty content row so textarea has something to bind to
     if (type === 'note' || type === 'custom') {
       _rows.push({ id: _uuid(), sectionId, sectionName: name, sectionType: type, fieldKey: 'content', fieldValue: '', extra: '', createdAt: _now(), updatedAt: _now() });
     }
-    // For credential/todo/list/reminder: section is created with no rows — shows empty state + add button
     await _save();
     bootstrap.Modal.getInstance(document.getElementById('vault-new-section-modal'))?.hide();
     _render();

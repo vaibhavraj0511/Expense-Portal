@@ -6390,6 +6390,32 @@ body.sidebar-pinned .ep-main {
   cursor: pointer; white-space: nowrap; transition: background .12s;
 }
 .split-ppill-settle:hover { background: rgba(16,185,129,.28); }
+
+/* Two-button settle row */
+.split-ppill-settle-row {
+  display: flex;
+  flex-direction: column;
+  gap: .2rem;
+  margin-left: .15rem;
+  flex-shrink: 0;
+}
+.split-ppill-settle--account {
+  background: rgba(16,185,129,.14); color: #059669;
+  border: 1px solid rgba(16,185,129,.3); border-radius: 6px;
+  font-size: .6rem; font-weight: 700; padding: .1rem .32rem;
+  cursor: pointer; white-space: nowrap; transition: background .12s;
+}
+.split-ppill-settle--account:hover { background: rgba(16,185,129,.28); }
+.split-ppill-settle--cash {
+  background: rgba(245,158,11,.12); color: #d97706;
+  border: 1px solid rgba(245,158,11,.3); border-radius: 6px;
+  font-size: .6rem; font-weight: 700; padding: .1rem .32rem;
+  cursor: pointer; white-space: nowrap; transition: background .12s;
+}
+.split-ppill-settle--cash:hover { background: rgba(245,158,11,.24); }
+[data-theme="dark"] .split-ppill-settle--account { background: rgba(16,185,129,.12); color: #34d399; border-color: rgba(16,185,129,.25); }
+[data-theme="dark"] .split-ppill-settle--cash    { background: rgba(245,158,11,.1);  color: #fbbf24; border-color: rgba(245,158,11,.25); }
+
 .split-p-row input { min-width: 0; }
 
 [data-theme="dark"] .split-card { background: #1a1d2e; border-color: #2d3748; border-left-color: #6366f1; }

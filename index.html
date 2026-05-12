@@ -5540,6 +5540,22 @@
                   <option value="me">Me (I paid)</option>
                 </select>
               </div>
+              <div class="col-md-6" id="split-payment-method-wrap">
+                <label class="form-label fw-semibold">Paid From <span class="text-danger">*</span></label>
+                <select id="split-payment-method" class="form-select">
+                  <option value="">Select account / card…</option>
+                </select>
+                <div class="form-text">Required when you paid — deducted from this account.</div>
+              </div>
+            </div>
+
+            <div class="row g-3 mb-3">
+              <div class="col-md-6 d-none" id="split-category-wrap">
+                <label class="form-label fw-semibold">Expense Category</label>
+                <select id="split-expense-category" class="form-select">
+                  <option value="Split Expense">Split Expense</option>
+                </select>
+              </div>
               <div class="col-md-6">
                 <label class="form-label fw-semibold">Note</label>
                 <input type="text" id="split-note" class="form-control" placeholder="Optional note" />
@@ -5569,6 +5585,53 @@
           <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
           <button type="button" class="btn btn-primary" id="split-confirm-btn">
             <i class="bi bi-check-circle-fill me-1"></i>Create Split
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Split: Quick Settle Modal -->
+  <div class="modal fade" tabindex="-1" id="oc-split-settle" aria-labelledby="oc-split-settle-label" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="oc-split-settle-label"><i class="bi bi-check-circle-fill me-2 text-success"></i>Settle Amount</h5>
+          <button type="button" class="modal-close-x" data-bs-dismiss="modal" aria-label="Close">&#x2715;</button>
+        </div>
+        <div class="modal-body">
+          <div id="split-settle-error" class="alert alert-danger d-none mb-3"></div>
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Person</label>
+            <input type="text" id="split-settle-person" class="form-control" readonly />
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Amount <span class="text-danger">*</span></label>
+            <div class="input-group">
+              <span class="input-group-text">₹</span>
+              <input type="number" id="split-settle-amount" class="form-control" min="0.01" step="0.01" />
+            </div>
+            <div class="form-text split-settle-outstanding-hint"></div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Received Into <span class="text-danger">*</span></label>
+            <select id="split-settle-account" class="form-select">
+              <option value="">Select account…</option>
+            </select>
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Date</label>
+            <input type="date" id="split-settle-date" class="form-control" />
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Note</label>
+            <input type="text" id="split-settle-note" class="form-control" placeholder="Optional" />
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="button" class="btn btn-success" id="split-settle-confirm">
+            <i class="bi bi-check-circle-fill me-1"></i>Record Settlement
           </button>
         </div>
       </div>

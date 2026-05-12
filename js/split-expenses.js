@@ -3,11 +3,11 @@
 import { CONFIG } from './config.js';
 import { appendRow, fetchRows, writeAllRows } from './api.js';
 import * as store from './store.js';
-import { formatCurrency, formatDate } from './utils.js';
+import { formatCurrency, formatDate, populatePaymentSelect } from './utils.js';
 import { epConfirm } from './confirm.js';
 
 // ─── Serialization ────────────────────────────────────────────────────────────
-// Columns: id | description | date | totalAmount | paidBy | participantsJSON | note | lendingIdsJSON
+// Columns: id | description | date | totalAmount | paidBy | participantsJSON | note | lendingIdsJSON | paymentMethod | expenseId
 
 export function serialize(g) {
   return [
@@ -19,6 +19,8 @@ export function serialize(g) {
     JSON.stringify(g.participants ?? []),
     g.note ?? '',
     JSON.stringify(g.lendingIds ?? []),
+    g.paymentMethod ?? '',
+    g.expenseId ?? '',
   ];
 }
 
@@ -28,14 +30,16 @@ export function deserialize(row) {
   try { participants = JSON.parse(row[5] ?? '[]'); } catch { /* ignore */ }
   try { lendingIds   = JSON.parse(row[7] ?? '[]'); } catch { /* ignore */ }
   return {
-    id:          row[0] ?? '',
-    description: row[1] ?? '',
-    date:        row[2] ?? '',
-    totalAmount: parseFloat(row[3]) || 0,
-    paidBy:      row[4] ?? 'me',
+    id:            row[0] ?? '',
+    description:   row[1] ?? '',
+    date:          row[2] ?? '',
+    totalAmount:   parseFloat(row[3]) || 0,
+    paidBy:        row[4] ?? 'me',
     participants,
-    note:        row[6] ?? '',
+    note:          row[6] ?? '',
     lendingIds,
+    paymentMethod: row[8] ?? '',
+    expenseId:     row[9] ?? '',
   };
 }
 
@@ -78,6 +82,80 @@ function _quickSettle(lendingEntryId) {
   if (hiddenField) hiddenField.value = lendingEntryId;
   const modal = document.getElementById('oc-settlement');
   if (modal) bootstrap.Modal.getOrCreateInstance(modal).show();
+}
+
+// ─── Split-specific settle state ─────────────────────────────────────────────
+let _pendingSettleLendingId = null;
+
+function _openSplitSettle(lendingEntryId) {
+  const lendings    = store.get('lendings')            ?? [];
+  const settlements = store.get('lendingSettlements')  ?? [];
+  const entry = lendings.find(l => l.id === lendingEntryId);
+  if (!entry) return;
+
+  const paid        = settlements.filter(s => s.entryId === lendingEntryId).reduce((s, x) => s + x.amount, 0);
+  const outstanding = Math.max(entry.amount - paid, 0);
+
+  _pendingSettleLendingId = lendingEntryId;
+
+  const personEl    = document.getElementById('split-settle-person');
+  const amountEl    = document.getElementById('split-settle-amount');
+  const hintEl      = document.querySelector('.split-settle-outstanding-hint');
+  const dateEl      = document.getElementById('split-settle-date');
+  const noteEl      = document.getElementById('split-settle-note');
+  const errEl       = document.getElementById('split-settle-error');
+  const accountSel  = document.getElementById('split-settle-account');
+
+  if (personEl)  personEl.value  = entry.counterparty;
+  if (amountEl)  amountEl.value  = outstanding.toFixed(2);
+  if (hintEl)    hintEl.textContent = `Outstanding: ${formatCurrency(outstanding)}`;
+  if (dateEl)    dateEl.value    = new Date().toISOString().slice(0, 10);
+  if (noteEl)    noteEl.value    = '';
+  if (errEl)     errEl.classList.add('d-none');
+
+  // Populate account dropdown
+  if (accountSel) {
+    populatePaymentSelect(
+      accountSel,
+      store.get('accounts')    ?? [],
+      store.get('creditCards') ?? [],
+      'Select account to receive into…'
+    );
+  }
+
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('oc-split-settle')).show();
+}
+
+async function _markSettledCash(lendingEntryId) {
+  const lendings    = store.get('lendings')           ?? [];
+  const settlements = store.get('lendingSettlements') ?? [];
+  const entry = lendings.find(l => l.id === lendingEntryId);
+  if (!entry) return;
+
+  const paid        = settlements.filter(s => s.entryId === lendingEntryId).reduce((s, x) => s + x.amount, 0);
+  const outstanding = Math.max(entry.amount - paid, 0);
+  if (outstanding <= 0) return;
+
+  const confirmed = await epConfirm(
+    `Mark ${entry.counterparty}'s share as settled?`,
+    `This records ${formatCurrency(outstanding)} as settled without updating any account balance (cash/external payment).`
+  );
+  if (!confirmed) return;
+
+  const { serializeSettlement, deserializeSettlement } = await import('./lendings.js');
+  const settlement = {
+    id:           crypto.randomUUID(),
+    entryId:      lendingEntryId,
+    amount:       outstanding,
+    date:         new Date().toISOString().slice(0, 10),
+    accountRef:   '',
+    mirroredTxId: '',
+    note:         'Settled (cash/external)',
+  };
+  await appendRow(CONFIG.sheets.lendingSettlements, serializeSettlement(settlement));
+  const rows = await fetchRows(CONFIG.sheets.lendingSettlements);
+  store.set('lendingSettlements', rows.map(deserializeSettlement));
+  render();
 }
 
 // ─── Rendering ────────────────────────────────────────────────────────────────
@@ -171,8 +249,10 @@ export function render() {
 
   container.querySelectorAll('.split-card-del[data-delete-split]').forEach(btn =>
     btn.addEventListener('click', () => _deleteGroup(btn.dataset.deleteSplit)));
-  container.querySelectorAll('.split-ppill-settle[data-settle-lid]').forEach(btn =>
-    btn.addEventListener('click', e => { e.stopPropagation(); _quickSettle(btn.dataset.settleLid); }));
+  container.querySelectorAll('.split-ppill-settle--account[data-settle-lid]').forEach(btn =>
+    btn.addEventListener('click', e => { e.stopPropagation(); _openSplitSettle(btn.dataset.settleLid); }));
+  container.querySelectorAll('.split-ppill-settle--cash[data-settle-cash]').forEach(btn =>
+    btn.addEventListener('click', e => { e.stopPropagation(); _markSettledCash(btn.dataset.settleCash); }));
 }
 
 function _renderGroupCard(g, lendings, settlements) {
@@ -235,7 +315,10 @@ function _renderGroupCard(g, lendings, settlements) {
       : fmt(p.share);
     const canSettle = p.entryId && (status === 'outstanding' || status === 'partial');
     const settleBtn = canSettle
-      ? `<button class="split-ppill-settle" data-settle-lid="${esc(p.entryId)}">Settle ✓</button>`
+      ? `<div class="split-ppill-settle-row">
+           <button class="split-ppill-settle split-ppill-settle--account" data-settle-lid="${esc(p.entryId)}" title="Settle via account"><i class="bi bi-bank2 me-1"></i>Settle</button>
+           <button class="split-ppill-settle split-ppill-settle--cash" data-settle-cash="${esc(p.entryId)}" title="Mark settled (cash/external)"><i class="bi bi-cash-coin me-1"></i>Cash</button>
+         </div>`
       : '';
     return `<div class="split-ppill split-ppill--${status}">
       <div class="split-ppill-avatar">${initials}</div>
@@ -330,6 +413,9 @@ function _openModal() {
   _addParticipantRow();
   _updatePaidByOptions();
   _updateEqualSplit();
+  // Populate payment method dropdown
+  _refreshPaymentMethodDropdown();
+  _togglePaymentMethodVisibility();
 }
 
 function _addYouRow(share = '') {
@@ -378,6 +464,23 @@ function _addParticipantRow(name = '', share = '') {
   });
   wrap.appendChild(row);
   _updatePaidByOptions();
+}
+
+function _refreshPaymentMethodDropdown() {
+  const sel = document.getElementById('split-payment-method');
+  if (!sel) return;
+  populatePaymentSelect(
+    sel,
+    store.get('accounts')    ?? [],
+    store.get('creditCards') ?? [],
+    'Select account / card…'
+  );
+}
+
+function _togglePaymentMethodVisibility() {
+  const paidBy = document.getElementById('split-paid-by')?.value;
+  const wrap   = document.getElementById('split-payment-method-wrap');
+  if (wrap) wrap.style.display = paidBy === 'me' ? '' : 'none';
 }
 
 function _updatePaidByOptions() {
@@ -448,7 +551,35 @@ async function _handleCreate() {
   const { serialize: sLend, deserialize: dLend } = await import('./lendings.js');
 
   if (paidBy === 'me') {
-    // You paid — each friend owes you their share → create "lent" entries
+    // ── Create expense entry for the full bill amount ──────────────────────
+    const paymentMethod = document.getElementById('split-payment-method')?.value?.trim() ?? '';
+    if (!paymentMethod) {
+      errEl.textContent = 'Please select the account / card you paid from.';
+      errEl.classList.remove('d-none');
+      return;
+    }
+
+    const { serialize: sExp, deserialize: dExp } = await import('./expenses.js');
+    const expRecord = {
+      date,
+      category:      'Split Expense',
+      subCategory:   '',
+      amount:        totalAmount,
+      description:   description,
+      paymentMethod,
+      tags:          ['split'],
+    };
+    await appendRow(CONFIG.sheets.expenses, sExp(expRecord));
+    const expRows = await fetchRows(CONFIG.sheets.expenses);
+    const expRecords = expRows.map(dExp);
+    store.set('expenses', expRecords);
+
+    // Store the expense index as expenseId (last matching record)
+    const matches = expRecords.map((r, i) => ({ ...r, _idx: i }))
+      .filter(r => r.description === description && r.amount === totalAmount && r.date === date && r.paymentMethod === paymentMethod);
+    const expenseId = matches.length > 0 ? String(matches[matches.length - 1]._idx) : '';
+
+    // ── Create lending entries for each friend's share ─────────────────────
     for (const p of friends) {
       const lendId = crypto.randomUUID();
       lendingIds.push(lendId);
@@ -458,12 +589,25 @@ async function _handleCreate() {
         counterparty: p.name,
         amount:       p.share,
         date,
-        accountRef:   '',
+        accountRef:   paymentMethod,
         mirroredTxId: '',
         note:         `Split: ${description}`,
       };
       await appendRow(CONFIG.sheets.lendings, sLend(entry));
     }
+
+    // Reload lendings into store
+    try {
+      const rows = await fetchRows(CONFIG.sheets.lendings);
+      store.set('lendings', rows.map(dLend));
+    } catch { /* ignore */ }
+
+    // Save the split group
+    const group = { id, description, date, totalAmount, paidBy, participants, note, lendingIds, paymentMethod, expenseId };
+    await appendRow(CONFIG.sheets.splitExpenses, serialize(group));
+    const groups = [...(store.get('splitGroups') ?? []), group];
+    store.set('splitGroups', groups);
+
   } else {
     // A friend paid — you owe them your share → create "borrowed" entry
     const myShare = youEntry?.share ?? 0;
@@ -482,19 +626,19 @@ async function _handleCreate() {
       };
       await appendRow(CONFIG.sheets.lendings, sLend(entry));
     }
+
+    // Reload lendings into store
+    try {
+      const rows = await fetchRows(CONFIG.sheets.lendings);
+      store.set('lendings', rows.map(dLend));
+    } catch { /* ignore */ }
+
+    // Save the split group
+    const group = { id, description, date, totalAmount, paidBy, participants, note, lendingIds, paymentMethod: '', expenseId: '' };
+    await appendRow(CONFIG.sheets.splitExpenses, serialize(group));
+    const groups = [...(store.get('splitGroups') ?? []), group];
+    store.set('splitGroups', groups);
   }
-
-  // Reload lendings into store
-  try {
-    const rows = await fetchRows(CONFIG.sheets.lendings);
-    store.set('lendings', rows.map(dLend));
-  } catch { /* ignore */ }
-
-  // Save the split group
-  const group = { id, description, date, totalAmount, paidBy, participants, note, lendingIds };
-  await appendRow(CONFIG.sheets.splitExpenses, serialize(group));
-  const groups = [...(store.get('splitGroups') ?? []), group];
-  store.set('splitGroups', groups);
 
   // Close modal
   const modal = bootstrap.Modal.getInstance(document.getElementById('oc-split-expense'));
@@ -534,10 +678,68 @@ export async function init() {
   });
   document.getElementById('split-paid-by')?.addEventListener('change', () => {
     if (document.getElementById('split-equal')?.checked) _updateEqualSplit();
+    _togglePaymentMethodVisibility();
   });
 
   // Bind confirm button
   document.getElementById('split-confirm-btn')?.addEventListener('click', _handleCreate);
+
+  // ── Settle via Account confirm ──────────────────────────────────────────────
+  document.getElementById('split-settle-confirm')?.addEventListener('click', async () => {
+    const errEl     = document.getElementById('split-settle-error');
+    const amountEl  = document.getElementById('split-settle-amount');
+    const accountEl = document.getElementById('split-settle-account');
+    const dateEl    = document.getElementById('split-settle-date');
+    const noteEl    = document.getElementById('split-settle-note');
+
+    errEl?.classList.add('d-none');
+
+    const amount  = parseFloat(amountEl?.value) || 0;
+    const account = accountEl?.value?.trim() ?? '';
+    const date    = dateEl?.value ?? new Date().toISOString().slice(0, 10);
+    const note    = noteEl?.value?.trim() ?? '';
+
+    if (amount <= 0)  { if (errEl) { errEl.textContent = 'Amount must be greater than zero.'; errEl.classList.remove('d-none'); } return; }
+    if (!account)     { if (errEl) { errEl.textContent = 'Please select an account to receive into.'; errEl.classList.remove('d-none'); } return; }
+    if (!_pendingSettleLendingId) return;
+
+    const { serializeSettlement, deserializeSettlement } = await import('./lendings.js');
+
+    // Create settlement record
+    const settlement = {
+      id:           crypto.randomUUID(),
+      entryId:      _pendingSettleLendingId,
+      amount,
+      date,
+      accountRef:   account,
+      mirroredTxId: '',
+      note:         note || 'Split settlement',
+    };
+    await appendRow(CONFIG.sheets.lendingSettlements, serializeSettlement(settlement));
+
+    // Create income entry (money received back into account)
+    const { serialize: sInc, deserialize: dInc } = await import('./income.js');
+    const lendings = store.get('lendings') ?? [];
+    const entry    = lendings.find(l => l.id === _pendingSettleLendingId);
+    const incRecord = {
+      date,
+      source:      'Lending',
+      amount,
+      description: `Split repayment from ${entry?.counterparty ?? 'friend'}`,
+      receivedIn:  account,
+    };
+    await appendRow(CONFIG.sheets.income, sInc(incRecord));
+    const incRows = await fetchRows(CONFIG.sheets.income);
+    store.set('income', incRows.map(dInc));
+
+    // Reload settlements
+    const settleRows = await fetchRows(CONFIG.sheets.lendingSettlements);
+    store.set('lendingSettlements', settleRows.map(deserializeSettlement));
+
+    _pendingSettleLendingId = null;
+    bootstrap.Modal.getInstance(document.getElementById('oc-split-settle'))?.hide();
+    render();
+  });
 
   // Bind search
   document.getElementById('split-search')?.addEventListener('input', e => {
