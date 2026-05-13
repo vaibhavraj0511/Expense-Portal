@@ -114,15 +114,33 @@ export async function processDueRecurring() {
 
     try {
       if (rec.type === 'expense') {
-        const { serialize: serExp } = await import('./expenses.js');
-        const record = { date: createDate, category: rec.category, subCategory: '', amount: rec.amount, description: rec.description, paymentMethod: rec.paymentMethod };
+        const { serialize: serExp, deserialize: deExp } = await import('./expenses.js');
+        const record = {
+          date: createDate,
+          category: rec.category,
+          subCategory: '',
+          amount: rec.amount,
+          description: rec.description,
+          paymentMethod: rec.paymentMethod,
+          tags: [],
+        };
         await appendRow(CONFIG.sheets.expenses, serExp(record));
-        store.set('expenses', [...(store.get('expenses') ?? []), record]);
+        // Re-fetch so store is always in sync with Sheets (avoids stale push)
+        const expRows = await fetchRows(CONFIG.sheets.expenses);
+        store.set('expenses', expRows.map(deExp));
       } else {
-        const { serialize: serInc } = await import('./income.js');
-        const record = { date: createDate, source: rec.category, amount: rec.amount, description: rec.description, receivedIn: rec.paymentMethod };
+        const { serialize: serInc, deserialize: deInc } = await import('./income.js');
+        const record = {
+          date: createDate,
+          source: rec.category,
+          amount: rec.amount,
+          description: rec.description,
+          receivedIn: rec.paymentMethod,
+        };
         await appendRow(CONFIG.sheets.income, serInc(record));
-        store.set('income', [...(store.get('income') ?? []), record]);
+        // Re-fetch so store is always in sync with Sheets
+        const incRows = await fetchRows(CONFIG.sheets.income);
+        store.set('income', incRows.map(deInc));
       }
 
       current = current.map(t => t.id === rec.id ? { ...t, lastCreated: todayStr } : t);
