@@ -239,13 +239,11 @@
           <button class="ep-nav-item" data-tab="tab-vault">
             <span class="nav-icon" style="color:#f59e0b;background:rgba(245,158,11,.12)"><i class="bi bi-shield-lock-fill"></i></span>
             <span class="nav-label">Personal Vault</span>
-            <span class="nav-badge" style="background:#f59e0b">New</span>
             <span class="vault-nav-badge" style="display:none;background:#ef4444;color:#fff;font-size:.65rem;padding:1px 5px;border-radius:999px;margin-left:4px">0</span>
           </button>
           <button class="ep-nav-item" data-tab="tab-detailed-guide">
             <span class="nav-icon" style="color:#0d9488;background:rgba(13,148,136,.12)"><i class="bi bi-book-fill"></i></span>
             <span class="nav-label">Detailed Guide</span>
-            <span class="nav-badge">New</span>
           </button>
           <button class="ep-nav-item" data-bs-toggle="modal" data-bs-target="#user-guide-modal">
             <span class="nav-icon" style="color:#a78bfa;background:rgba(139,92,246,.12)"><i class="bi bi-question-circle-fill"></i></span>
@@ -2033,6 +2031,45 @@
                   </button>
                 </div>
                 <nav id="vehicle-expense-pagination" class="d-flex justify-content-center py-2"></nav>
+              </div>
+            </div>
+
+            <!-- Predictive Maintenance Gap Analyzer -->
+            <div class="card mb-4 veh-section-card veh-section-card--indigo">
+              <div class="card-header fw-semibold d-flex justify-content-between align-items-center">
+                <span>
+                  <span class="veh-card-hd-icon veh-card-hd-icon--indigo"><i class="bi bi-graph-up-arrow"></i></span>
+                  Maintenance Gap Analyzer
+                </span>
+                <span class="badge bg-primary-subtle text-primary-emphasis" style="font-size:.7rem"><i class="bi bi-cpu me-1"></i>Predictive</span>
+              </div>
+              <div class="card-body p-3">
+                <div id="gap-smart-alerts"></div>
+                <div id="gap-analyzer-container"></div>
+              </div>
+            </div>
+
+            <!-- Vehicle Intelligence -->
+            <div class="card mb-4 veh-section-card veh-section-card--green">
+              <div class="card-header fw-semibold d-flex justify-content-between align-items-center">
+                <span>
+                  <span class="veh-card-hd-icon veh-card-hd-icon--green"><i class="bi bi-bar-chart-fill"></i></span>
+                  Vehicle Intelligence
+                </span>
+                <span class="badge bg-success-subtle text-success-emphasis" style="font-size:.7rem"><i class="bi bi-graph-up me-1"></i>Analytics</span>
+              </div>
+              <div class="card-body p-3">
+                <div id="veh-cost-per-km-row" class="gap-kpm-row mb-3"></div>
+                <div class="gap-charts-grid">
+                  <div class="gap-chart-wrap" id="fuel-trend-wrap">
+                    <div class="gap-chart-label"><i class="bi bi-speedometer2 me-1"></i>Fuel Efficiency Trend (km/L)</div>
+                    <div class="gap-chart-canvas-wrap"><canvas id="fuel-trend-chart"></canvas></div>
+                  </div>
+                  <div class="gap-chart-wrap" id="monthly-cost-wrap">
+                    <div class="gap-chart-label"><i class="bi bi-bar-chart-fill me-1"></i>Monthly Cost Breakdown</div>
+                    <div class="gap-chart-canvas-wrap"><canvas id="monthly-cost-chart"></canvas></div>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -4527,10 +4564,16 @@
         <div class="modal-body">
           <form id="expense-form" novalidate>
             <div class="exp-form-section-hd"><i class="bi bi-clock me-1"></i>When &amp; How much</div>
-            <div class="mb-3">
-              <label for="expense-date" class="form-label">Date</label>
-              <input type="date" class="form-control" id="expense-date" required />
-              <div class="invalid-feedback">Date is required.</div>
+            <div class="row g-2 mb-3">
+              <div class="col-7">
+                <label for="expense-date" class="form-label">Date</label>
+                <input type="date" class="form-control" id="expense-date" required />
+                <div class="invalid-feedback">Date is required.</div>
+              </div>
+              <div class="col-5">
+                <label for="expense-time" class="form-label">Time <span class="text-muted small">(optional)</span></label>
+                <input type="time" class="form-control" id="expense-time" />
+              </div>
             </div>
             <div class="mb-3">
               <label for="expense-amount" class="form-label">Amount</label>
@@ -4620,10 +4663,16 @@
         <div class="modal-body">
           <form id="income-form" novalidate>
             <div class="inc-form-section-hd"><i class="bi bi-clock me-1"></i>When &amp; How much</div>
-            <div class="mb-3">
-              <label for="income-date" class="form-label">Date</label>
-              <input type="date" class="form-control" id="income-date" required />
-              <div class="invalid-feedback">Date is required.</div>
+            <div class="row g-2 mb-3">
+              <div class="col-7">
+                <label for="income-date" class="form-label">Date</label>
+                <input type="date" class="form-control" id="income-date" required />
+                <div class="invalid-feedback">Date is required.</div>
+              </div>
+              <div class="col-5">
+                <label for="income-time" class="form-label">Time <span class="text-muted small">(optional)</span></label>
+                <input type="time" class="form-control" id="income-time" />
+              </div>
             </div>
             <div class="mb-3">
               <label for="income-amount" class="form-label">Amount</label>
@@ -5088,6 +5137,11 @@
             <div class="mb-3">
               <label for="ve-description" class="form-label">Description</label>
               <input type="text" class="form-control" id="ve-description" />
+            </div>
+            <div class="mb-3">
+              <label for="ve-odo-reading" class="form-label">ODO Reading (km) <span class="text-muted small">(optional)</span></label>
+              <input type="number" class="form-control" id="ve-odo-reading" min="0" step="1" placeholder="e.g. 35300" />
+              <div class="form-text">Enter current odometer reading to enable gap analysis.</div>
             </div>
             <div class="d-flex gap-2">
               <button type="submit" class="btn btn-success flex-fill">Add Expense</button>
@@ -7263,42 +7317,51 @@
       const { deserialize: deLoan }       = await import('./js/loans.js');
 
       const sheets = CONFIG.sheets;
-      // Run in batches of 4 (1000 ms gap) to stay within Google Sheets 60 req/min quota
+      // Batched fetches — reads quota is 300 req/min (5/sec), so BATCH=5 + GAP=1000ms is safe.
+      // Priority order: dashboard-critical first, then user-visible sections (recurring/bills/subs),
+      // then supporting data, then heavy/rarely-visited sheets last.
       const _fetchTasks = [
+        // ── Batch 1 (T=0s): dashboard + high-priority sections ──────────────
         () => fetchRows(sheets.expenses).then(r => store.set('expenses', r.map(deExp))),
         () => fetchRows(sheets.income).then(r => store.set('income', r.map(deInc))),
         () => fetchRows(sheets.accounts).then(r => store.set('accounts', r.map(deserializeAccount))),
         () => fetchRows(sheets.creditCards).then(r => store.set('creditCards', r.map(deserializeCreditCard))),
-        () => fetchRows(sheets.ccPayments).then(r => store.set('ccPayments', r.map(deserializeCcPayment).filter(p => p.id))),
+        () => fetchRows(sheets.recurring).then(r => store.set('recurring', r.map(deRecurring).filter(x => x.id))),
+        // ── Batch 2 (T=1s): bills, subscriptions, budgets ───────────────────
+        () => fetchRows(sheets.bills).then(r => store.set('bills', _filterBills(r.map(deBills).filter(x => x.id)))),
+        () => fetchRows(sheets.subscriptions).then(r => store.set('subscriptions', r.map(deserializeSub).filter(x => x.id))),
         () => fetchRows(sheets.budgets).then(r => store.set('budgets', r.map(deBudget))),
         () => fetchRows(sheets.savings).then(r => store.set('savings', _filterSavings(r.map(deSavings)))),
         () => fetchRows(sheets.transfers).then(r => store.set('transfers', r.map(deTransfer))),
-        () => fetchRows(sheets.vehicles).then(r => store.set('vehicles', r.map(deserializeVehicle))),
-        () => fetchRows(sheets.tripLogs).then(r => store.set('tripLogs', r.map(deserializeTripLog))),
-        () => fetchRows(sheets.vehicleExp).then(r => store.set('vehicleExpenses', r.map(deserializeVehicleExpense))),
+        // ── Batch 3 (T=2s): categories + cc payments ────────────────────────
         () => fetchRows(sheets.expenseCategories).then(r => store.set('expenseCategories', r.map(row => ({ name: row[0] ?? '' })).filter(x => x.name))),
         () => fetchRows(sheets.incomeSources).then(r => store.set('incomeSources', r.map(row => ({ name: row[0] ?? '' })).filter(x => x.name))),
         () => fetchRows(sheets.subCategories).then(r => store.set('subCategories', r.map(row => ({ category: row[0] ?? '', subCategory: row[1] ?? '' })).filter(x => x.category && x.subCategory))),
+        () => fetchRows(sheets.ccPayments).then(r => store.set('ccPayments', r.map(deserializeCcPayment).filter(p => p.id))),
+        () => fetchRows(sheets.lendings).then(r => store.set('lendings', r.map(deLending).filter(x => x.id))),
+        // ── Batch 4 (T=3s): vehicles + lending settlements ──────────────────
+        () => fetchRows(sheets.vehicles).then(r => store.set('vehicles', r.map(deserializeVehicle))),
+        () => fetchRows(sheets.tripLogs).then(r => store.set('tripLogs', r.map(deserializeTripLog))),
+        () => fetchRows(sheets.vehicleExp).then(r => store.set('vehicleExpenses', r.map(deserializeVehicleExpense))),
+        () => fetchRows(sheets.lendingSettlements).then(r => store.set('lendingSettlements', r.map(deSettlement).filter(x => x.id))),
+        () => fetchRows(sheets.splitExpenses).then(r => store.set('splitGroups', r.map(deSplit).filter(x => x.id))),
+        // ── Batch 5 (T=4s): vehicle details + investments ───────────────────
         () => fetchRows(sheets.vehicleExpenseTypes).then(r => store.set('vehicleExpenseTypes', r.map(row => ({ name: row[0] ?? '' })).filter(x => x.name))),
         () => fetchRows(sheets.maintenance).then(r => store.set('maintenance', r.map(deserializeMaintenance).filter(x => x.id))),
         () => fetchRows(sheets.vehicleDocuments).then(r => store.set('vehicleDocuments', r.map(deserializeVehicleDoc).filter(x => x.vehicleName))),
         () => fetchRows(sheets.vehicleInsurance).then(r => store.set('vehicleInsurance', r.map(deserializeInsurance).filter(x => x.id))),
-        () => fetchRows(sheets.recurring).then(r => store.set('recurring', r.map(deRecurring).filter(x => x.id))),
-        () => fetchRows(sheets.bills).then(r => store.set('bills', _filterBills(r.map(deBills).filter(x => x.id)))),
-        () => fetchRows(sheets.splitExpenses).then(r => store.set('splitGroups', r.map(deSplit).filter(x => x.id))),
-        () => fetchRows(sheets.lendings).then(r => store.set('lendings', r.map(deLending).filter(x => x.id))),
-        () => fetchRows(sheets.lendingSettlements).then(r => store.set('lendingSettlements', r.map(deSettlement).filter(x => x.id))),
         () => fetchRows(sheets.investments).then(r => store.set('investments', r.map(deInvestment).filter(x => x.id))),
+        // ── Batch 6 (T=5s): loans, staff, settings, trips ───────────────────
         () => fetchRows(sheets.loans).then(r => store.set('loans', r.map(deLoan).filter(x => x.id))),
         () => fetchRows(sheets.maids).then(r => store.set('maids', r.map(deserializeMaid).filter(x => x.id))),
         () => fetchRows(sheets.maidAttendance).then(r => store.set('maidAttendance', r.map(deserializeAttendance).filter(x => x.id))),
-        () => fetchRows(sheets.subscriptions).then(r => store.set('subscriptions', r.map(deserializeSub).filter(x => x.id))),
         () => fetchRows(sheets.settings).then(r => store.set('settings', r.map(row => ({ key: row[0] ?? '', value: row[1] ?? '' })).filter(x => x.key))).catch(() => store.set('settings', [])),
         () => fetchRows(sheets.trips).then(r => store.set('trips', r.map(deserializeTrip).filter(x => x.id && x.name))).catch(() => store.set('trips', [])),
+        // ── Batch 7 (T=6s): trip expenses ───────────────────────────────────
         () => fetchRows(sheets.tripExpenses).then(r => store.set('tripExpenses', r.map(deserializeTripExp).filter(x => x.id && x.tripId))).catch(() => store.set('tripExpenses', [])),
       ];
       const results = [];
-      const BATCH = 3, GAP_MS = 3000;
+      const BATCH = 5, GAP_MS = 1000;
       for (let i = 0; i < _fetchTasks.length; i += BATCH) {
         const batchResults = await Promise.allSettled(_fetchTasks.slice(i, i + BATCH).map(t => t()));
         results.push(...batchResults);

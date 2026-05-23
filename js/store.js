@@ -22,6 +22,7 @@ const state = {
   vehicleInsurance: [],
   splitGroups: [],
   loans: [],
+  recurring: [],
 };
 
 const listeners = {};
@@ -29,7 +30,9 @@ const listeners = {};
 function set(key, records) {
   state[key] = records;
   if (listeners[key]) {
-    listeners[key].forEach(cb => cb(records));
+    listeners[key].forEach(cb => {
+      try { cb(records); } catch (err) { console.error('[store] Listener error for key:', key, err); }
+    });
   }
 }
 

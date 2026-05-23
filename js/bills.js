@@ -70,10 +70,47 @@ function _billIcon(category) {
 // ─── Filter state ─────────────────────────────────────────────────────────────
 const _billFilter = { search: '', status: '' };
 
+// ─── Paid-in-current-cycle check ────────────────────────────────────────────
+// Returns true only when bill.lastPaid is on or after the most recent past due
+// date, meaning the current billing cycle has already been paid.
+function _isPaidCurrentCycle(bill) {
+  if (!bill.lastPaid || bill.lastPaid === '') return false;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const lastPaid = new Date(bill.lastPaid);
+  if (isNaN(lastPaid.getTime())) return false;
+
+  let lastDue;
+
+  if (bill.frequency === 'yearly') {
+    const month = bill.dueMonth ? bill.dueMonth - 1 : 0;
+    lastDue = new Date(today.getFullYear(), month, bill.dueDay);
+    if (lastDue > today) lastDue.setFullYear(lastDue.getFullYear() - 1);
+  } else if (bill.frequency === 'quarterly') {
+    const startMonth = bill.dueMonth ? bill.dueMonth - 1 : 0;
+    let d = new Date(today.getFullYear(), startMonth, bill.dueDay);
+    while (d > today) d.setMonth(d.getMonth() - 3);
+    let next = new Date(d); next.setMonth(next.getMonth() + 3);
+    while (next <= today) { d = new Date(next); next = new Date(d); next.setMonth(next.getMonth() + 3); }
+    lastDue = d;
+  } else {
+    // monthly
+    const yr = today.getFullYear(), mo = today.getMonth();
+    if (today.getDate() >= bill.dueDay) {
+      lastDue = new Date(yr, mo, bill.dueDay);
+    } else {
+      const pm = mo === 0 ? 11 : mo - 1;
+      const py = mo === 0 ? yr - 1 : yr;
+      lastDue = new Date(py, pm, bill.dueDay);
+    }
+  }
+
+  return lastPaid >= lastDue;
+}
+
 // ─── Next due date calculation ────────────────────────────────────────────────
 
 function _nextDueDate(bill) {
-  const isPaid = bill.lastPaid && bill.lastPaid !== '';
+  const isPaid = _isPaidCurrentCycle(bill);
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   
@@ -169,7 +206,7 @@ export function render() {
     if (search && !b.name.toLowerCase().includes(search) && !b.category.toLowerCase().includes(search)) return false;
     if (!status || status === 'all') return true;
     const days = _getDaysUntilDue(b);
-    const isPaid = b.lastPaid && b.lastPaid !== '';
+    const isPaid = _isPaidCurrentCycle(b);
     if (status === 'overdue')   return b.active && days < 0;
     if (status === 'due-today') return b.active && days === 0;
     if (status === 'due-week')  return b.active && days >= 0 && days <= 7;
@@ -198,7 +235,7 @@ export function render() {
     const next       = _nextDueDate(b);
     const nextStr    = next.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
     const daysUntil  = _getDaysUntilDue(b);
-    const isPaid     = b.lastPaid && b.lastPaid !== '';
+    const isPaid     = _isPaidCurrentCycle(b);
     const isOverdue  = b.active && daysUntil < 0;
     const paidDateStr = isPaid ? new Date(b.lastPaid).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '';
     const canPay     = b.active && (!isPaid || daysUntil <= 7);

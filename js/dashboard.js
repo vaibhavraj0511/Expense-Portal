@@ -68,11 +68,15 @@ export function render() {
   _renderSpendingTiers();
 }
 
+const _LENDING_EXP_CATS = new Set(['Lending', 'Borrowing']);
+const _isLendingExp = r => _LENDING_EXP_CATS.has(r.category);
+const _isLendingInc = r => r.source === 'Lending' || r.source === 'Borrowing';
+
 function _renderSummary() {
   const expenses = store.get('expenses') ?? [];
   const income   = store.get('income')   ?? [];
-  const totalIncome  = income.filter(r => isInCurrentMonth(r.date)).reduce((s, r) => s + r.amount, 0);
-  const totalExpense = expenses.filter(r => isInCurrentMonth(r.date)).reduce((s, r) => s + r.amount, 0);
+  const totalIncome  = income.filter(r => isInCurrentMonth(r.date) && !_isLendingInc(r)).reduce((s, r) => s + r.amount, 0);
+  const totalExpense = expenses.filter(r => isInCurrentMonth(r.date) && !_isLendingExp(r)).reduce((s, r) => s + r.amount, 0);
   const net = totalIncome - totalExpense;
 
   const incomeEl  = el('dash-income');
@@ -98,8 +102,8 @@ function _renderSummary() {
   if (expenseBar) expenseBar.style.width = expensePct + '%';
   if (netBar)     netBar.style.width     = netPct     + '%';
 
-  const allIncome  = income.reduce((s, r) => s + r.amount, 0);
-  const allExpense = expenses.reduce((s, r) => s + r.amount, 0);
+  const allIncome  = income.filter(r => !_isLendingInc(r)).reduce((s, r) => s + r.amount, 0);
+  const allExpense = expenses.filter(r => !_isLendingExp(r)).reduce((s, r) => s + r.amount, 0);
   const allNet     = allIncome - allExpense;
   const totalIncomeEl  = el('dash-total-income');
   const totalExpenseEl = el('dash-total-expense');
@@ -440,8 +444,8 @@ function _renderSavingsRate() {
 function _renderOverallSavingsRate() {
   const expenses = store.get('expenses') ?? [];
   const income   = store.get('income')   ?? [];
-  const allIncome  = income.reduce((s, r) => s + r.amount, 0);
-  const allExpense = expenses.reduce((s, r) => s + r.amount, 0);
+  const allIncome  = income.filter(r => !_isLendingInc(r)).reduce((s, r) => s + r.amount, 0);
+  const allExpense = expenses.filter(r => !_isLendingExp(r)).reduce((s, r) => s + r.amount, 0);
   const allNet  = allIncome - allExpense;
   const rate = allIncome > 0 ? Math.round((allNet / allIncome) * 100) : 0;
 
@@ -2023,8 +2027,8 @@ function _populateMonthSelector() {
 }
 
 function _generateReport(month) {
-  const expenses = (store.get('expenses') ?? []).filter(e => String(e.date ?? '').startsWith(month));
-  const income   = (store.get('income')   ?? []).filter(i => String(i.date ?? '').startsWith(month));
+  const expenses = (store.get('expenses') ?? []).filter(e => String(e.date ?? '').startsWith(month) && !_isLendingExp(e));
+  const income   = (store.get('income')   ?? []).filter(i => String(i.date ?? '').startsWith(month) && !_isLendingInc(i));
   const totalIncome   = income.reduce((s, r) => s + (Number(r.amount) || 0), 0);
   const totalExpenses = expenses.reduce((s, r) => s + (Number(r.amount) || 0), 0);
   const net           = totalIncome - totalExpenses;

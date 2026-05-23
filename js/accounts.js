@@ -181,32 +181,83 @@ export function renderBalanceHistoryChart() {
       borderWidth: 3,
       spanGaps: true,
     }];
-    // Compute and update the stats strip
-    const statData  = totalData.filter(v => v !== null);
-    const latestStat = statData[statData.length - 1] ?? null;
-    const firstStat  = statData[0] ?? null;
-    const peakStat   = statData.length ? Math.max(...statData) : null;
-    const lowStat    = statData.length ? Math.min(...statData) : null;
-    const chgAmt     = latestStat !== null && firstStat !== null ? latestStat - firstStat : null;
-    const chgPct     = firstStat && Math.abs(firstStat) > 0 ? (chgAmt / Math.abs(firstStat)) * 100 : null;
-    const _sfmt = v => v !== null ? '\u20b9' + new Intl.NumberFormat('en-IN').format(Math.round(v)) : '\u2014';
-    const _sqs  = id => document.getElementById(id);
-    if (_sqs('acc-stat-latest')) _sqs('acc-stat-latest').textContent = _sfmt(latestStat);
-    if (_sqs('acc-stat-peak'))   _sqs('acc-stat-peak').textContent   = _sfmt(peakStat);
-    if (_sqs('acc-stat-low'))    _sqs('acc-stat-low').textContent    = _sfmt(lowStat);
-    if (_sqs('acc-stat-chg')) {
-      const chgEl = _sqs('acc-stat-chg');
-      if (chgAmt !== null) {
-        const sign   = chgAmt >= 0 ? '+' : '';
-        const pctStr = chgPct !== null ? ` (${sign}${chgPct.toFixed(1)}%)` : '';
-        chgEl.textContent = `${sign}${_sfmt(chgAmt)}${pctStr}`;
-        chgEl.className   = 'acc-chart-stat-val ' + (chgAmt >= 0 ? 'acc-chart-stat-val--up' : 'acc-chart-stat-val--down');
-      } else {
-        chgEl.textContent = '\u2014'; chgEl.className = 'acc-chart-stat-val';
-      }
-    }
     const subEl = document.getElementById('acc-chart-subtitle');
     if (subEl) subEl.textContent = '';
+  }
+
+  // ── Stats strip ───────────────────────────────────────────────────────────────
+  // Always computed from the unfiltered `datasets` (pre-alignment, pre-range-clip)
+  // so they work correctly for both the per-account toggle AND every time filter.
+  //
+  // Fix for Issue 1: Current Balance sums each account's LATEST balance regardless
+  //   of the selected time range — accounts with no recent transactions are included.
+  // Fix for Issue 2: Period Peak/Low include the carry-forward balance at the period
+  //   start boundary so they change meaningfully on every range tab click.
+
+  // Balance of dataset ds strictly BEFORE date (carry-forward, exclusive)
+  const _accBalBefore = (ds, date) => {
+    const dates = ds.labels ?? [], vals = ds.data ?? [];
+    let bal = 0;
+    for (let i = dates.length - 1; i >= 0; i--) {
+      if (dates[i] < date) { bal = vals[i] ?? 0; break; }
+    }
+    return bal;
+  };
+  // Balance of dataset ds on or before date (carry-forward, inclusive)
+  const _accBalAt = (ds, date) => {
+    const dates = ds.labels ?? [], vals = ds.data ?? [];
+    let bal = 0;
+    for (let i = dates.length - 1; i >= 0; i--) {
+      if (dates[i] <= date) { bal = vals[i] ?? 0; break; }
+    }
+    return bal;
+  };
+
+  // 1. Current Balance = latest balance per account summed (all-time, not range-clipped)
+  const _currentBal = datasets.length
+    ? datasets.reduce((s, ds) => s + (ds.data?.[ds.data.length - 1] ?? 0), 0)
+    : null;
+
+  // 2. Period start = carry-forward per account to just BEFORE the cutoff
+  //    For "All" range (cutoffDate = null) use each account's very first stored balance
+  const _periodStart = cutoffDate
+    ? datasets.reduce((s, ds) => s + _accBalBefore(ds, cutoffDate), 0)
+    : datasets.reduce((s, ds) => s + (ds.data?.[0] ?? 0), 0);
+
+  // 3. All distinct transaction dates within the selected period
+  const _periodDates = [...new Set(
+    datasets.flatMap(ds => (ds.labels ?? []).filter(d => !cutoffDate || d >= cutoffDate))
+  )].sort();
+
+  // 4. Total balance (all accounts) at each period transaction date using carry-forward
+  const _periodTotals = _periodDates.map(d =>
+    datasets.reduce((s, ds) => s + _accBalAt(ds, d), 0)
+  );
+
+  // 5. Combined value series: period-start carry-forward + each transaction point in period
+  const _periodVals = [_periodStart, ..._periodTotals];
+  const _peakStat   = datasets.length ? Math.max(..._periodVals) : null;
+  const _lowStat    = datasets.length ? Math.min(..._periodVals) : null;
+  const _periodEnd  = _periodVals[_periodVals.length - 1] ?? null;
+  const _chgAmt     = datasets.length && _periodEnd !== null ? _periodEnd - _periodStart : null;
+  const _chgPct     = _periodStart && Math.abs(_periodStart) > 0
+    ? (_chgAmt / Math.abs(_periodStart)) * 100 : null;
+
+  const _sfmt = v => v !== null ? '\u20b9' + new Intl.NumberFormat('en-IN').format(Math.round(v)) : '\u2014';
+  const _sqs  = id => document.getElementById(id);
+  if (_sqs('acc-stat-latest')) _sqs('acc-stat-latest').textContent = _sfmt(_currentBal);
+  if (_sqs('acc-stat-peak'))   _sqs('acc-stat-peak').textContent   = _sfmt(_peakStat);
+  if (_sqs('acc-stat-low'))    _sqs('acc-stat-low').textContent    = _sfmt(_lowStat);
+  if (_sqs('acc-stat-chg')) {
+    const chgEl = _sqs('acc-stat-chg');
+    if (_chgAmt !== null) {
+      const sign   = _chgAmt >= 0 ? '+' : '';
+      const pctStr = _chgPct !== null ? ` (${sign}${_chgPct.toFixed(1)}%)` : '';
+      chgEl.textContent = `${sign}${_sfmt(_chgAmt)}${pctStr}`;
+      chgEl.className   = 'acc-chart-stat-val ' + (_chgAmt >= 0 ? 'acc-chart-stat-val--up' : 'acc-chart-stat-val--down');
+    } else {
+      chgEl.textContent = '\u2014'; chgEl.className = 'acc-chart-stat-val';
+    }
   }
 
   if (_balanceChart) { _balanceChart.destroy(); _balanceChart = null; }

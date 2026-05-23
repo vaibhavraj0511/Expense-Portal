@@ -22,8 +22,8 @@ export function serializeVehicle(r) { return [r.id, r.name, r.type, r.regNumber 
 export function deserializeVehicle(row) { return { id: row[0]??'', name: row[1]??'', type: row[2]??'', regNumber: row[3]??'' }; }
 export function serializeTripLog(r) { return [r.id, r.vehicleName??'', r.date, String(r.odoReading), String(r.fuelCost??0), String(r.fuelLitres??0), r.purpose, String(r.pricePerLitre??0)]; }
 export function deserializeTripLog(row) { return { id: row[0]??'', vehicleName: row[1]??'', date: row[2]??'', odoReading: parseFloat(row[3])||0, fuelCost: parseFloat(row[4])||0, fuelLitres: parseFloat(row[5])||0, purpose: row[6]??'', pricePerLitre: parseFloat(row[7])||0 }; }
-export function serializeVehicleExpense(r) { return [r.id, r.vehicleName??'', r.date, r.expenseType??'', String(r.amount), r.paymentMethod??'', r.description??'']; }
-export function deserializeVehicleExpense(row) { return { id: row[0]??'', vehicleName: row[1]??'', date: row[2]??'', expenseType: row[3]??'', amount: parseFloat(row[4])||0, paymentMethod: row[5]??'', description: row[6]??'' }; }
+export function serializeVehicleExpense(r) { return [r.id, r.vehicleName??'', r.date, r.expenseType??'', String(r.amount), r.paymentMethod??'', r.description??'', String(r.odoReading??0)]; }
+export function deserializeVehicleExpense(row) { return { id: row[0]??'', vehicleName: row[1]??'', date: row[2]??'', expenseType: row[3]??'', amount: parseFloat(row[4])||0, paymentMethod: row[5]??'', description: row[6]??'', odoReading: parseFloat(row[7])||0 }; }
 export function serializeMaintenance(r) { return [r.id, r.vehicleName??'', r.type??'', r.date??'', String(r.odoReading??0), String(r.intervalKm??0), String(r.intervalDays??0), r.notes??'']; }
 export function deserializeMaintenance(row) { return { id: row[0]??'', vehicleName: row[1]??'', type: row[2]??'', date: row[3]??'', odoReading: parseFloat(row[4])||0, intervalKm: parseFloat(row[5])||0, intervalDays: parseFloat(row[6])||0, notes: row[7]??'' }; }
 export function serializeInsurance(r) { return [r.id??'', r.vehicleName??'', r.policyType??'', r.provider??'', r.policyNumber??'', r.expiryDate??'', String(r.premiumAmount??'')]; }
@@ -32,6 +32,348 @@ export function serializeVehicleDoc(r) { return [r.vehicleName, r.insuranceExpir
 export function deserializeVehicleDoc(row) { return { vehicleName: row[0]??'', insuranceExpiry: row[1]??'', rcExpiry: row[2]??'' }; }
 
 function escapeHtml(str) { return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+// ─── Maintenance Gap Analyzer (dynamic, data-driven) ─────────────────────────
+// No hard-coded benchmarks. Averages are computed from the user's own data.
+
+function _computeGroupStats(sortedEntries) {
+  const daysGaps = [], kmGaps = [];
+  for (let i = 1; i < sortedEntries.length; i++) {
+    const d = Math.round((new Date(sortedEntries[i].date) - new Date(sortedEntries[i - 1].date)) / 86400000);
+    if (d > 0) daysGaps.push(d);
+    if (sortedEntries[i].odoReading > 0 && sortedEntries[i - 1].odoReading > 0) {
+      const km = sortedEntries[i].odoReading - sortedEntries[i - 1].odoReading;
+      if (km > 0) kmGaps.push(km);
+    }
+  }
+  const avg = arr => arr.length ? Math.round(arr.reduce((s, v) => s + v, 0) / arr.length) : null;
+  return { avgDays: avg(daysGaps), avgKm: avg(kmGaps), count: daysGaps.length };
+}
+
+function _evaluateGapStatus(daysGap, kmGap, stats) {
+  // Need ≥2 gaps (3+ entries) for a meaningful average baseline
+  if (!stats || stats.count < 2) return 'neutral';
+  const results = [];
+  if (stats.avgDays && daysGap > 0) {
+    const r = daysGap / stats.avgDays;
+    results.push(r < 0.6 ? 'too-early' : r <= 1.35 ? 'good' : 'overdue');
+  }
+  if (stats.avgKm && kmGap !== null && kmGap > 0) {
+    const r = kmGap / stats.avgKm;
+    results.push(r < 0.6 ? 'too-early' : r <= 1.35 ? 'good' : 'overdue');
+  }
+  if (!results.length) return 'neutral';
+  if (results.includes('overdue'))   return 'overdue';
+  if (results.includes('too-early')) return 'too-early';
+  return 'good';
+}
+
+function _gapBar(value, avg, status) {
+  if (!avg || !value) return '';
+  const pct = Math.min(Math.round((value / avg) * 60), 100);
+  const color = status === 'good' ? '#10b981' : status === 'too-early' ? '#f59e0b' : status === 'overdue' ? '#ef4444' : '#94a3b8';
+  return `<div class="gap-bar"><div class="gap-bar-fill" style="width:${pct}%;background:${color}"></div></div>`;
+}
+
+function _renderGapGroup(g, stats) {
+  const hasAvg = stats.avgDays || stats.avgKm;
+  const avgLine = hasAvg
+    ? `<span class="gap-avg-hint"><i class="bi bi-bar-chart-line me-1"></i>Avg: ${stats.avgDays ? stats.avgDays + 'd' : '—'}${stats.avgKm ? ' / ' + stats.avgKm.toLocaleString('en-IN') + ' km' : ''}</span>`
+    : `<span class="gap-avg-hint" style="color:#94a3b8">Add ODO for KM analysis</span>`;
+
+  // Next due prediction
+  const last = g.entries[g.entries.length - 1];
+  let nextDueHtml = '';
+  if (stats.avgDays && last?.date) {
+    const nd = new Date(last.date);
+    nd.setDate(nd.getDate() + stats.avgDays);
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const du = Math.round((nd - today) / 86400000);
+    const cls = du < 0 ? 'gap-next--overdue' : du <= 7 ? 'gap-next--soon' : 'gap-next--ok';
+    const lbl = du < 0 ? `${Math.abs(du)}d overdue` : du === 0 ? 'Today' : `in ${du}d`;
+    nextDueHtml = `<span class="gap-next-due ${cls}"><i class="bi bi-calendar-check me-1"></i>${formatDate(nd.toISOString().split('T')[0])} · ${lbl}</span>`;
+  }
+
+  // Avg cost per service
+  const avgCost = Math.round(g.entries.reduce((s, e) => s + (e.amount || 0), 0) / g.entries.length);
+
+  const rows = g.entries.slice(1).map((cur, idx) => {
+    const prev = g.entries[idx];
+    const daysGap = Math.round((new Date(cur.date) - new Date(prev.date)) / 86400000);
+    const kmGap   = (cur.odoReading > 0 && prev.odoReading > 0) ? (cur.odoReading - prev.odoReading) : null;
+    const st = _evaluateGapStatus(daysGap, kmGap, stats);
+    const stBadge = st === 'good'
+      ? `<span class="gap-pill gap-pill--good"><i class="bi bi-check-circle-fill me-1"></i>Good</span>`
+      : st === 'too-early'
+      ? `<span class="gap-pill gap-pill--early"><i class="bi bi-exclamation-triangle-fill me-1"></i>Too Early</span>`
+      : st === 'overdue'
+      ? `<span class="gap-pill gap-pill--overdue"><i class="bi bi-exclamation-octagon-fill me-1"></i>Overdue</span>`
+      : `<span class="gap-pill gap-pill--neutral">—</span>`;
+    const kmCell = kmGap !== null
+      ? `<div class="gap-tc-km">${kmGap.toLocaleString('en-IN')} km${_gapBar(kmGap, stats.avgKm, st)}</div>`
+      : `<div class="gap-tc-km gap-tc-nodata">No ODO</div>`;
+    return `
+      <div class="gap-tc-row">
+        <div class="gap-tc-date"><i class="bi bi-calendar3 me-1 text-muted"></i>${formatDate(cur.date)}</div>
+        <div class="gap-tc-days">${daysGap}d${_gapBar(daysGap, stats.avgDays, st)}</div>
+        ${kmCell}
+        <div class="gap-tc-status">${stBadge}</div>
+      </div>`;
+  }).reverse().join('');
+
+  return `
+    <div class="gap-type-card">
+      <div class="gap-type-card-hd gap-tc-toggle" role="button">
+        <div class="gap-tc-icon"><i class="bi bi-tools"></i></div>
+        <div class="gap-tc-title">
+          <div class="gap-tc-name">${escapeHtml(g.expenseType)}</div>
+          <div class="gap-tc-sub">${g.entries.length} entries${avgCost > 0 ? ` · avg ${formatCurrency(avgCost)}` : ''}</div>
+        </div>
+        ${avgLine}
+        ${nextDueHtml}
+        <i class="bi bi-chevron-down gap-tc-chevron ms-2"></i>
+      </div>
+      <div class="gap-tc-table d-none">
+        <div class="gap-tc-row gap-tc-head">
+          <div>Date</div><div>Days Gap</div><div>KM Gap</div><div>Status</div>
+        </div>
+        ${rows}
+      </div>
+    </div>`;
+}
+
+function _computeVehicleHealthScore(typeGroups) {
+  let good = 0, overdue = 0, early = 0, total = 0;
+  typeGroups.forEach(g => {
+    if (g.entries.length < 3) return;
+    const stats = _computeGroupStats(g.entries);
+    if (stats.count < 2) return;
+    g.entries.slice(1).forEach((cur, idx) => {
+      const prev = g.entries[idx];
+      const dg = Math.round((new Date(cur.date) - new Date(prev.date)) / 86400000);
+      const kg = (cur.odoReading > 0 && prev.odoReading > 0) ? cur.odoReading - prev.odoReading : null;
+      const st = _evaluateGapStatus(dg, kg, stats);
+      if (st === 'good')      { good++;    total++; }
+      else if (st === 'overdue')   { overdue++;  total++; }
+      else if (st === 'too-early') { early++;    total++; }
+    });
+  });
+  if (total === 0) return null;
+  return { score: Math.round((good * 100 + early * 60) / total), good, overdue, early, total };
+}
+
+export function renderGapAnalyzer() {
+  const container = document.getElementById('gap-analyzer-container');
+  if (!container) return;
+  const filterVehicle = _getSelectedVehicle();
+  let exps = store.get('vehicleExpenses') ?? [];
+  if (filterVehicle) exps = exps.filter(e => e.vehicleName === filterVehicle);
+
+  renderSmartAlerts(exps);
+
+  if (exps.length === 0) {
+    container.innerHTML = `<div class="gap-empty"><i class="bi bi-graph-up-arrow me-2"></i>No vehicle expenses yet. Add expenses with ODO readings to enable analysis.</div>`;
+    return;
+  }
+  const groups = {};
+  exps.forEach(e => {
+    const k = `${e.vehicleName}__${e.expenseType}`;
+    if (!groups[k]) groups[k] = { vehicleName: e.vehicleName, expenseType: e.expenseType, entries: [] };
+    groups[k].entries.push(e);
+  });
+  Object.values(groups).forEach(g => g.entries.sort((a, b) => a.date.localeCompare(b.date)));
+  const byVehicle = {};
+  Object.values(groups).forEach(g => {
+    if (!byVehicle[g.vehicleName]) byVehicle[g.vehicleName] = [];
+    byVehicle[g.vehicleName].push(g);
+  });
+  container.innerHTML = Object.entries(byVehicle).map(([vName, typeGroups]) => {
+    const hs = _computeVehicleHealthScore(typeGroups);
+    const hsCls = hs ? (hs.score >= 75 ? 'gap-hs--good' : hs.score >= 45 ? 'gap-hs--warn' : 'gap-hs--poor') : '';
+    const hsHtml = hs ? `<div class="gap-health-score ${hsCls}"><div class="gap-hs-num">${hs.score}</div><div class="gap-hs-label">Health</div></div>` : '';
+    return `
+      <div class="gap-vehicle-group">
+        <div class="gap-vehicle-header">
+          <div class="gap-vehicle-label"><i class="bi bi-car-front-fill me-1"></i>${escapeHtml(vName)}</div>
+          ${hsHtml}
+        </div>
+        ${typeGroups.map(g => g.entries.length >= 2
+          ? _renderGapGroup(g, _computeGroupStats(g.entries))
+          : _renderGapGroupPending(g)
+        ).join('')}
+      </div>`;
+  }).join('');
+  container.querySelectorAll('.gap-tc-toggle').forEach(hd => {
+    hd.addEventListener('click', () => {
+      const table   = hd.nextElementSibling;
+      const chevron = hd.querySelector('.gap-tc-chevron');
+      table?.classList.toggle('d-none');
+      chevron?.classList.toggle('bi-chevron-down');
+      chevron?.classList.toggle('bi-chevron-up');
+    });
+  });
+}
+
+function renderSmartAlerts(exps) {
+  const container = document.getElementById('gap-smart-alerts');
+  if (!container) return;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const groups = {};
+  (exps ?? []).forEach(e => {
+    const k = `${e.vehicleName}__${e.expenseType}`;
+    if (!groups[k]) groups[k] = { vehicleName: e.vehicleName, expenseType: e.expenseType, entries: [] };
+    groups[k].entries.push(e);
+  });
+  Object.values(groups).forEach(g => g.entries.sort((a, b) => a.date.localeCompare(b.date)));
+  const alerts = [];
+  Object.values(groups).forEach(g => {
+    if (g.entries.length < 2) return;
+    const stats = _computeGroupStats(g.entries);
+    if (!stats.avgDays) return;
+    const last = g.entries[g.entries.length - 1];
+    const nd = new Date(last.date); nd.setDate(nd.getDate() + stats.avgDays);
+    const du = Math.round((nd - today) / 86400000);
+    if (du < 0)     alerts.push({ level: 'overdue', vehicleName: g.vehicleName, expenseType: g.expenseType, du, avgDays: stats.avgDays });
+    else if (du <= 7) alerts.push({ level: 'soon',   vehicleName: g.vehicleName, expenseType: g.expenseType, du, avgDays: stats.avgDays });
+  });
+  if (!alerts.length) { container.innerHTML = ''; return; }
+  alerts.sort((a, b) => a.du - b.du);
+  container.innerHTML = `<div class="gap-alerts-wrap">${alerts.map(a => `
+    <div class="gap-alert gap-alert--${a.level}">
+      <i class="bi bi-${a.level === 'overdue' ? 'exclamation-octagon-fill' : 'clock-fill'} gap-alert-icon"></i>
+      <div class="gap-alert-body">
+        <div class="gap-alert-title">${escapeHtml(a.expenseType)} · ${escapeHtml(a.vehicleName)}</div>
+        <div class="gap-alert-sub">${a.level === 'overdue'
+          ? `Overdue by ${Math.abs(a.du)}d — avg every ${a.avgDays}d`
+          : `Due in ${a.du}d — avg every ${a.avgDays}d`}</div>
+      </div>
+    </div>`).join('')}</div>`;
+}
+
+let _fuelChart = null, _costChart = null;
+
+export function renderFuelTrendChart() {
+  const canvas = document.getElementById('fuel-trend-chart');
+  const wrap   = document.getElementById('fuel-trend-wrap');
+  if (!canvas || typeof Chart === 'undefined') return;
+  const trips    = store.get('tripLogs')  ?? [];
+  const vehicles = store.get('vehicles') ?? [];
+  const fv = _getSelectedVehicle();
+  const vehicleData = {};
+  vehicles.forEach(v => {
+    if (fv && v.name !== fv) return;
+    const vt = trips.filter(t => t.vehicleName === v.name).sort((a, b) => a.date.localeCompare(b.date));
+    const pts = [];
+    vt.forEach((t, i) => {
+      if (!i || !t.fuelLitres || t.fuelLitres <= 0) return;
+      const dist = t.odoReading - vt[i - 1].odoReading;
+      if (dist <= 0 || dist > 2000) return;
+      const kpl = dist / t.fuelLitres;
+      if (kpl > 0 && kpl < 80) pts.push({ date: t.date, kpl: +kpl.toFixed(1) });
+    });
+    if (pts.length >= 2) vehicleData[v.name] = pts;
+  });
+  if (!Object.keys(vehicleData).length) { wrap?.classList.add('d-none'); return; }
+  wrap?.classList.remove('d-none');
+  const allDates = [...new Set(Object.values(vehicleData).flatMap(p => p.map(x => x.date)))].sort();
+  const C = ['#6366f1','#10b981','#f59e0b','#ef4444','#3b82f6','#8b5cf6'];
+  if (_fuelChart) { _fuelChart.destroy(); _fuelChart = null; }
+  _fuelChart = new Chart(canvas, {
+    type: 'line',
+    data: {
+      labels: allDates.map(d => formatDate(d)),
+      datasets: Object.entries(vehicleData).map(([nm, pts], i) => {
+        const map = Object.fromEntries(pts.map(p => [p.date, p.kpl]));
+        return { label: nm, data: allDates.map(d => map[d] ?? null), borderColor: C[i%C.length], backgroundColor: C[i%C.length]+'22', tension: 0.35, fill: false, spanGaps: true, pointRadius: 4, pointHoverRadius: 6 };
+      }),
+    },
+    options: { responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { position: 'top' }, tooltip: { mode: 'index', intersect: false } },
+      scales: { y: { title: { display: true, text: 'km/L' }, beginAtZero: false }, x: { ticks: { maxTicksLimit: 8, maxRotation: 0 } } } },
+  });
+}
+
+export function renderMonthlyCostChart() {
+  const canvas = document.getElementById('monthly-cost-chart');
+  const wrap   = document.getElementById('monthly-cost-wrap');
+  if (!canvas || typeof Chart === 'undefined') return;
+  const exps = store.get('vehicleExpenses') ?? [];
+  const fv   = _getSelectedVehicle();
+  const filtered = fv ? exps.filter(e => e.vehicleName === fv) : exps;
+  if (!filtered.length) { wrap?.classList.add('d-none'); return; }
+  wrap?.classList.remove('d-none');
+  const monthMap = {};
+  filtered.forEach(e => {
+    const ym = String(e.date ?? '').slice(0, 7); if (!ym) return;
+    if (!monthMap[ym]) monthMap[ym] = { Fuel: 0, Maintenance: 0, Other: 0 };
+    const c = (e.expenseType ?? '').toLowerCase();
+    if (/fuel|petrol|diesel|cng|gas/.test(c))               monthMap[ym].Fuel        += e.amount;
+    else if (/service|repair|oil|tyre|tire|brake|maint|chain|wash|air|filter|plug/.test(c)) monthMap[ym].Maintenance += e.amount;
+    else                                                     monthMap[ym].Other       += e.amount;
+  });
+  const months = Object.keys(monthMap).sort().slice(-12);
+  if (_costChart) { _costChart.destroy(); _costChart = null; }
+  _costChart = new Chart(canvas, {
+    type: 'bar',
+    data: {
+      labels: months.map(m => { const [y,mo]=m.split('-'); return new Date(+y,+mo-1).toLocaleString('en-IN',{month:'short',year:'2-digit'}); }),
+      datasets: [
+        { label: 'Fuel',        data: months.map(m => Math.round(monthMap[m].Fuel)),        backgroundColor: '#6366f1cc' },
+        { label: 'Maintenance', data: months.map(m => Math.round(monthMap[m].Maintenance)), backgroundColor: '#f59e0bcc' },
+        { label: 'Other',       data: months.map(m => Math.round(monthMap[m].Other)),       backgroundColor: '#10b981cc' },
+      ],
+    },
+    options: { responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { position: 'top' }, tooltip: { mode: 'index', intersect: false } },
+      scales: { x: { stacked: true }, y: { stacked: true, ticks: { callback: v => '₹'+v.toLocaleString('en-IN') } } } },
+  });
+}
+
+export function renderCostPerKm() {
+  const container = document.getElementById('veh-cost-per-km-row');
+  if (!container) return;
+  const vehicles = store.get('vehicles')        ?? [];
+  const trips    = store.get('tripLogs')         ?? [];
+  const exps     = store.get('vehicleExpenses')  ?? [];
+  const fv = _getSelectedVehicle();
+  const vList = fv ? vehicles.filter(v => v.name === fv) : vehicles;
+  if (!vList.length) { container.innerHTML = ''; return; }
+  container.innerHTML = vList.map(v => {
+    const vt = trips.filter(t => t.vehicleName === v.name).sort((a, b) => a.odoReading - b.odoReading);
+    const totalKm   = vt.length >= 2 ? vt[vt.length-1].odoReading - vt[0].odoReading : 0;
+    const totalCost = exps.filter(e => e.vehicleName === v.name).reduce((s, e) => s + e.amount, 0);
+    const cpm = totalKm > 50 ? (totalCost / totalKm).toFixed(1) : null;
+    return `<div class="gap-kpm-card">
+      <div class="gap-kpm-vehicle"><i class="bi bi-car-front-fill me-1"></i>${escapeHtml(v.name)}</div>
+      <div class="gap-kpm-value">${cpm ? '₹'+cpm : '—'}<span class="gap-kpm-unit">/km</span></div>
+      <div class="gap-kpm-sub">${totalKm > 0 ? totalKm.toLocaleString('en-IN')+' km tracked · '+formatCurrency(Math.round(totalCost))+' total' : 'Log trips to calculate'}</div>
+    </div>`;
+  }).join('');
+}
+
+function _renderGapGroupPending(g) {
+  const e = g.entries[0];
+  return `
+    <div class="gap-type-card">
+      <div class="gap-type-card-hd gap-tc-toggle" role="button">
+        <div class="gap-tc-icon" style="background:linear-gradient(135deg,#94a3b8,#64748b)"><i class="bi bi-tools"></i></div>
+        <div class="gap-tc-title">
+          <div class="gap-tc-name">${escapeHtml(g.expenseType)}</div>
+          <div class="gap-tc-sub">1 entry · ${formatDate(e.date)}</div>
+        </div>
+        <span class="gap-pending-hint"><i class="bi bi-hourglass-split me-1"></i>Waiting for 2nd entry</span>
+        <i class="bi bi-chevron-down gap-tc-chevron ms-2"></i>
+      </div>
+      <div class="gap-tc-table d-none">
+        <div class="gap-tc-row gap-tc-pending-row">
+          <div class="gap-tc-date"><i class="bi bi-calendar3 me-1 text-muted"></i>${formatDate(e.date)}</div>
+          <div class="gap-tc-days" style="color:#94a3b8">—</div>
+          <div class="gap-tc-km gap-tc-nodata">${e.odoReading > 0 ? e.odoReading.toLocaleString('en-IN') + ' km' : 'No ODO'}</div>
+          <div class="gap-tc-status"><span class="gap-pill gap-pill--neutral">First Entry</span></div>
+        </div>
+      </div>
+    </div>`;
+}
 const _ERR_REDIRECT = { 'trip-log-error-banner': 'vehicle-error-banner', 'vehicle-expense-error-banner': 'vehicle-error-banner' };
 function showError(id, msg) { const el = document.getElementById(_ERR_REDIRECT[id] ?? id); if (el) { el.textContent = msg; el.classList.remove('d-none'); } }
 function hideError(id) { const el = document.getElementById(_ERR_REDIRECT[id] ?? id); if (el) el.classList.add('d-none'); }
@@ -75,7 +417,7 @@ function _getTripPaginator() {
     _tripPaginator = createPaginator({
       containerId: 'trip-log-cards',
       paginationId: 'trip-log-pagination',
-      pageSize: 12,
+      pageSize: 10,
       renderPage(slice) {
         const container = document.getElementById('trip-log-cards');
         const emptyState = document.getElementById('trip-log-empty-state');
@@ -137,7 +479,7 @@ function _getVePaginator() {
     _vePaginator = createPaginator({
       containerId: 'vehicle-expense-cards',
       paginationId: 'vehicle-expense-pagination',
-      pageSize: 12,
+      pageSize: 10,
       renderPage(slice) {
         const container = document.getElementById('vehicle-expense-cards');
         const emptyState = document.getElementById('vehicle-expense-empty-state');
@@ -292,6 +634,23 @@ function _refreshVeExpenseTypes() {
 
 // ─── Render ───────────────────────────────────────────────────────────────────
 
+function _renderExpenseKPIs() {
+  const veExps = store.get('vehicleExpenses') ?? [];
+  const el = id => document.getElementById(id);
+  const now = new Date(); now.setHours(0, 0, 0, 0);
+  const curYM = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+
+  const monthVeExp = veExps.filter(e => String(e.date ?? '').startsWith(curYM)).reduce((s, e) => s + (Number(e.amount) || 0), 0);
+  if (el('veh-stat-month-cost')) el('veh-stat-month-cost').textContent = formatCurrency(monthVeExp);
+  if (el('veh-stat-month-cost-sub')) el('veh-stat-month-cost-sub').textContent =
+    `${veExps.filter(e => String(e.date ?? '').startsWith(curYM)).length} expense entries this month`;
+
+  const allVeExp = veExps.reduce((s, e) => s + (Number(e.amount) || 0), 0);
+  if (el('veh-stat-all-expenses')) el('veh-stat-all-expenses').textContent = formatCurrency(allVeExp);
+  if (el('veh-stat-all-expenses-sub')) el('veh-stat-all-expenses-sub').textContent =
+    `${veExps.length} entries · all time`;
+}
+
 export function render() {
   _populateVehicleDropdowns();
   _refreshVePaymentMethods();
@@ -299,6 +658,10 @@ export function render() {
   renderVehicleList();
   renderTripLogs();
   renderVehicleExpenses();
+  renderGapAnalyzer();
+  renderFuelTrendChart();
+  renderMonthlyCostChart();
+  renderCostPerKm();
   renderMonthlySummary();
   renderMaintenance();
   renderVehicleDocuments();
@@ -331,17 +694,8 @@ export function render() {
   // Total Trips stat card
   if (el('veh-stat-trips')) el('veh-stat-trips').textContent = trips.length;
 
-  // 1. Month's Total Cost (vehicle maintenance expenses only)
-  const monthVeExp = veExps.filter(e => String(e.date ?? '').startsWith(curYM)).reduce((s, e) => s + (Number(e.amount) || 0), 0);
-  if (el('veh-stat-month-cost')) el('veh-stat-month-cost').textContent = formatCurrency(monthVeExp);
-  if (el('veh-stat-month-cost-sub')) el('veh-stat-month-cost-sub').textContent =
-    `${veExps.filter(e => String(e.date ?? '').startsWith(curYM)).length} expense entries this month`;
-
-  // 2. Overall Vehicle Expenses (vehicle maintenance expenses only, all-time)
-  const allVeExp   = veExps.reduce((s, e) => s + (Number(e.amount) || 0), 0);
-  if (el('veh-stat-all-expenses')) el('veh-stat-all-expenses').textContent = formatCurrency(allVeExp);
-  if (el('veh-stat-all-expenses-sub')) el('veh-stat-all-expenses-sub').textContent =
-    `${veExps.length} entries · all time`;
+  // 1 & 2. Month's Total Cost + Overall Vehicle Expenses (from vehicleExpenses)
+  _renderExpenseKPIs();
 
   // 3. Best Mileage This Month
   let bestMileage = null, bestVehicleName = null;
@@ -715,6 +1069,8 @@ function _startEditVehicleExp(id) {
   document.getElementById('ve-amount').value = exp.amount;
   restorePaymentSelects('ve-payment-type', 've-payment-method', exp.paymentMethod, store);
   document.getElementById('ve-description').value = exp.description;
+  const odoInput = document.getElementById('ve-odo-reading');
+  if (odoInput) odoInput.value = exp.odoReading > 0 ? exp.odoReading : '';
   const cancelBtn = document.getElementById('vehicle-expense-cancel-edit');
   if (cancelBtn) cancelBtn.classList.remove('d-none');
   // Open the modal
@@ -931,6 +1287,7 @@ function _bindVehicleExpenseForm() {
     const amount        = parseFloat(document.getElementById('ve-amount')?.value) || 0;
     const paymentMethod = document.getElementById('ve-payment-method')?.value ?? '';
     const description   = document.getElementById('ve-description')?.value?.trim() ?? '';
+    const odoReading    = parseFloat(document.getElementById('ve-odo-reading')?.value) || 0;
     if (!vehicleName || !date || !expenseType || !amount || !paymentMethod) {
       showError('vehicle-expense-error-banner', 'Please fill in all required fields.');
       return;
@@ -938,7 +1295,7 @@ function _bindVehicleExpenseForm() {
     if (amount <= 0) { showError('vehicle-expense-error-banner', 'Amount must be positive.'); return; }
     hideError('vehicle-expense-error-banner');
     const id = _editingVehicleExpId ?? crypto.randomUUID();
-    const record = { id, vehicleName, date, expenseType, amount, paymentMethod, description };
+    const record = { id, vehicleName, date, expenseType, amount, paymentMethod, description, odoReading };
     try {
       let exps = store.get('vehicleExpenses') ?? [];
       exps = _editingVehicleExpId ? exps.map(ex => ex.id === _editingVehicleExpId ? record : ex) : [...exps, record];
@@ -1746,7 +2103,7 @@ export function init() {
   if (veTypeSel) veTypeSel.addEventListener('change', _refreshVePaymentMethods);
   store.on('vehicles',            () => { _populateVehicleDropdowns(); renderVehicleList(); renderMonthlySummary(); renderVehicleDocuments(); renderInsurancePolicies(); });
   store.on('tripLogs',            () => { renderTripLogs(); renderMonthlySummary(); renderMaintenance(); const statEl = document.getElementById('veh-stat-trips'); if (statEl) statEl.textContent = (store.get('tripLogs') ?? []).length; });
-  store.on('vehicleExpenses',     () => renderVehicleExpenses());
+  store.on('vehicleExpenses',     () => { renderVehicleExpenses(); _renderExpenseKPIs(); });
   store.on('maintenance',         () => renderMaintenance());
   store.on('manualOdo',           () => renderMaintenance());
   store.on('vehicleDocuments',    () => renderVehicleDocuments());

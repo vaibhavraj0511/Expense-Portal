@@ -1,0 +1,9 @@
+1. Lending mai jb bhi settle ho toh same expense entry se amount deduct ho or full settle h toh delete that entry income mai entry na kre kyuki vo income nhi h already vo payment ka income entry ho gya h so vo double entry hoga
+2. Personal vault mai jo bhi list mai entry h after complete mark after 1 month baad show krna remove kre de...jb bhi same name se entry toh ho show kre de (can we add last complete date so we can know kitne din baad fir se add kr rhe hai)
+3. can we add time in expense and income at what time we expense and income the amount
+4. Recurring is not working...sometime its not showing his data in recurring section check it
+5. KPI Cards of vehicle month's total cost, overall vehicle expenses should be take it from vehicle expense not trip logs
+6. add pagination in trip logs of vehicle section show only 10 entry the way we use pagination for vehicle expense
+7. check bills I can't see paid button in bill
+8. in account section graph ke upper jo current balance, period change, period peak, period low jo hai ussme sirf ek he account ka amount show ho rha h check this and let me know how it work and on click 1M, 3M, 6M, ALL it changes only period change amount not remaining check this also
+9. Remove new tag from the navbar

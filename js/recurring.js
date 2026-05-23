@@ -109,10 +109,9 @@ export async function processDueRecurring() {
   let anyCreated = false;
 
   for (const rec of current.filter(t => !t.paused)) {
-    const createDate = _getCreateDate(rec);
-    if (!createDate) continue;
-
     try {
+      const createDate = _getCreateDate(rec);
+      if (!createDate) continue;
       if (rec.type === 'expense') {
         const { serialize: serExp, deserialize: deExp } = await import('./expenses.js');
         const record = {
@@ -149,7 +148,7 @@ export async function processDueRecurring() {
       const label = createDate === todayStr ? 'today' : `backdated to ${createDate}`;
       console.info(`[recurring] Created ${rec.type}: ${rec.description} ${label} (${formatCurrency(rec.amount)})`);
     } catch (err) {
-      console.warn('[recurring] Failed to create entry:', err);
+      console.warn('[recurring] Failed to process entry for:', rec.description, err);
     }
   }
 
@@ -178,8 +177,16 @@ function _pmIconRec(name) {
 
 function _freqLabel(r) {
   const DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
-  if (r.frequency === 'weekly') { const s = new Date(r.startDate); return `Every ${DAYS[s.getDay()]}`; }
-  if (r.frequency === 'yearly') { const s = new Date(r.startDate); return `Yearly · ${s.toLocaleString('en-IN',{month:'short'})} ${r.day}`; }
+  if (r.frequency === 'weekly') {
+    const s = new Date(r.startDate);
+    const day = !isNaN(s.getTime()) ? DAYS[s.getDay()] : '?';
+    return `Every ${day}`;
+  }
+  if (r.frequency === 'yearly') {
+    const s = new Date(r.startDate);
+    const monthStr = !isNaN(s.getTime()) ? s.toLocaleString('en-IN', { month: 'short' }) : '?';
+    return `Yearly · ${monthStr} ${r.day}`;
+  }
   const sfx = r.day === 1 ? 'st' : r.day === 2 ? 'nd' : r.day === 3 ? 'rd' : 'th';
   return `Monthly on ${r.day}${sfx}`;
 }
@@ -216,6 +223,7 @@ async function skipNext(id) {
   if (!rec) return;
   const today = new Date(); today.setHours(0,0,0,0);
   const next = _nextDueDate(rec);
+  if (isNaN(next.getTime())) { alert('Cannot determine next due date for this template.'); return; }
   if (next <= today) {
     alert('Cannot skip today\'s due transaction. Pause instead.');
     return;
@@ -240,7 +248,12 @@ export function render() {
   // Sort: active soonest-due first, paused last
   visible.sort((a, b) => {
     if (a.paused !== b.paused) return a.paused ? 1 : -1;
-    return _nextDueDate(a) - _nextDueDate(b);
+    const da = _nextDueDate(a), db = _nextDueDate(b);
+    const va = !isNaN(da.getTime()), vb = !isNaN(db.getTime());
+    if (!va && !vb) return 0;
+    if (!va) return 1;
+    if (!vb) return -1;
+    return da - db;
   });
 
   // Stat cards (always computed from full set)
@@ -277,14 +290,15 @@ export function render() {
   list.innerHTML = `<div class="data-cards-grid">${visible.map(r => {
     const isExpense = r.type === 'expense';
     const next = _nextDueDate(r);
-    const nextStr = next.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' });
-    const daysUntil = Math.round((next - today) / 86400000);
-    const urgencyCls = r.paused ? '' : daysUntil === 0 ? 'rec-urgency--today' : daysUntil <= 3 ? 'rec-urgency--soon' : '';
+    const nextValid = !isNaN(next.getTime());
+    const nextStr = nextValid ? next.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' }) : '—';
+    const daysUntil = nextValid ? Math.round((next - today) / 86400000) : null;
+    const urgencyCls = r.paused || daysUntil === null ? '' : daysUntil === 0 ? 'rec-urgency--today' : daysUntil <= 3 ? 'rec-urgency--soon' : '';
     const iconGrad = isExpense
       ? 'background:linear-gradient(135deg,#ef4444,#dc2626);box-shadow:0 4px 12px rgba(239,68,68,.3)'
       : 'background:linear-gradient(135deg,#10b981,#059669);box-shadow:0 4px 12px rgba(16,185,129,.3)';
     const dueBadge = !r.paused && daysUntil === 0 ? '<span class="rec-due-today-badge">DUE TODAY</span>'
-      : !r.paused && daysUntil > 0 && daysUntil <= 3 ? `<span class="rec-due-soon-badge">In ${daysUntil}d</span>` : '';
+      : !r.paused && daysUntil !== null && daysUntil > 0 && daysUntil <= 3 ? `<span class="rec-due-soon-badge">In ${daysUntil}d</span>` : '';
 
     return `
       <div class="ecard ${isExpense ? 'ecard--expense' : 'ecard--income'}${r.paused ? ' rec-card--paused' : ''}">

@@ -10,7 +10,7 @@ import { createPaginator } from './paginate.js';
 import { showUndoToast } from './undo.js';
 
 // ─── Serialization (Task 6.1) ────────────────────────────────────────────────
-// Column order: A=date, B=source, C=amount, D=description, E=receivedIn
+// Column order: A=date, B=source, C=amount, D=description, E=receivedIn, F=time
 
 /**
  * Converts an IncomeRecord object to a row array for Google Sheets.
@@ -24,6 +24,7 @@ export function serialize(record) {
     String(record.amount),
     record.description,
     record.receivedIn ?? '',
+    record.time ?? '',
   ];
 }
 
@@ -39,6 +40,7 @@ export function deserialize(row) {
     amount: parseFloat(row[2]) || 0,
     description: row[3] ?? '',
     receivedIn: row[4] ?? '',
+    time: row[5] ?? '',
   };
 }
 
@@ -134,7 +136,16 @@ function _hideDuplicateWarning() {
 let _filteredTotal = 0;
 let _filteredCount = 0;
 
-// ─── Payment method icon ──────────────────────────────────────────────────────────
+// ─── Time formatter ───────────────────────────────────────────────────────────────
+function _fmtTime(t) {
+  if (!t) return '';
+  const [h, m] = t.split(':').map(Number);
+  if (isNaN(h) || isNaN(m)) return t;
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  return `${h % 12 || 12}:${String(m).padStart(2, '0')} ${ampm}`;
+}
+
+// ─── Payment method icon ────────────────────────────────────────────────────────────────
 function _pmIcon(name) {
   if (!name) return 'bi-bank2';
   const n = name.toLowerCase();
@@ -210,7 +221,7 @@ function _getPaginator() {
                   <i class="bi ${pmIcon}"></i>${escapeHtml(r.receivedIn)}
                 </span>
               </td>
-              <td class="cpt-date">${formatDate(r.date)}</td>
+              <td class="cpt-date">${formatDate(r.date)}${r.time ? `<div class="cpt-time">${_fmtTime(r.time)}</div>` : ''}</td>
               <td class="cpt-amt cpt-amt--income"><span class="inc-amt-pos">+${formatCurrency(r.amount)}</span></td>
               <td class="cpt-actions">
                 <button class="cpt-action-btn cpt-action-btn--edit" data-edit-idx="${r._idx}" title="Edit"><i class="bi bi-pencil-fill"></i></button>
@@ -258,7 +269,9 @@ export function render() {
     .map(r => ({ ...r, _idx: all.indexOf(r) }))
     .sort((a, b) => {
       if (_sortCol === 'amount') return _sortDir === 'desc' ? b.amount - a.amount : a.amount - b.amount;
-      return _sortDir === 'asc' ? (a.date < b.date ? -1 : a.date > b.date ? 1 : 0) : (b.date < a.date ? -1 : b.date > a.date ? 1 : 0);
+      return _sortDir === 'asc'
+        ? (a.date < b.date ? -1 : a.date > b.date ? 1 : (a.time ?? '') < (b.time ?? '') ? -1 : (a.time ?? '') > (b.time ?? '') ? 1 : 0)
+        : (b.date < a.date ? -1 : b.date > a.date ? 1 : (b.time ?? '') < (a.time ?? '') ? -1 : (b.time ?? '') > (a.time ?? '') ? 1 : 0);
     });
   _filteredCount = filtered.length;
   _filteredTotal = filtered.reduce((s, r) => s + (Number(r.amount) || 0), 0);
@@ -358,6 +371,17 @@ function _bindForm() {
   const form = document.getElementById('income-form');
   if (!form) return;
 
+  // Auto-fill current time when opening the modal for a new entry
+  document.getElementById('oc-income')?.addEventListener('show.bs.modal', () => {
+    if (_editingIndex === null) {
+      const ti = document.getElementById('income-time');
+      if (ti) {
+        const n = new Date();
+        ti.value = `${String(n.getHours()).padStart(2,'0')}:${String(n.getMinutes()).padStart(2,'0')}`;
+      }
+    }
+  });
+
   const submitBtn = form.querySelector('[type="submit"]');
   const cancelBtn = document.getElementById('income-cancel-edit');
 
@@ -399,6 +423,7 @@ function _bindForm() {
     clearFieldErrors(form);
 
     const date = form.querySelector('#income-date')?.value?.trim() ?? '';
+    const time = form.querySelector('#income-time')?.value?.trim() ?? '';
     const source = form.querySelector('#income-source')?.value?.trim() ?? '';
     const amount = form.querySelector('#income-amount')?.value?.trim() ?? '';
     const description = form.querySelector('#income-description')?.value?.trim() ?? '';
@@ -420,7 +445,7 @@ function _bindForm() {
     if (!amtResult.valid) { showFieldError('income-amount', amtResult.errors[0]); hasErrors = true; }
     if (hasErrors) return;
 
-    const record = { date, source, amount: parseFloat(amount), description, receivedIn };
+    const record = { date, time, source, amount: parseFloat(amount), description, receivedIn };
 
     // Duplicate check (skip when force-saving)
     if (!_forceIncomeSave && _checkDuplicate(date, source, parseFloat(amount))) {
@@ -466,6 +491,8 @@ function _startEdit(idx) {
 
   if (form) {
     form.querySelector('#income-date').value = r.date;
+    const timeInput = form.querySelector('#income-time');
+    if (timeInput) timeInput.value = r.time ?? '';
     form.querySelector('#income-source').value = r.source;
     form.querySelector('#income-amount').value = r.amount;
     form.querySelector('#income-description').value = r.description;

@@ -513,6 +513,9 @@ export function computeAll(expenses, income, budgets, savings) {
 
 // ─── Public: Income vs Expense Ratio by Category ─────────────────────────────
 
+const _isLendingExp = r => r.category === 'Lending' || r.category === 'Borrowing';
+const _isLendingInc = r => r.source === 'Lending' || r.source === 'Borrowing';
+
 export function computeIncomeExpenseRatio(expenses, income) {
   const curMonth = getCurrentMonth();
   const prevMonth = getPreviousMonth();
@@ -520,12 +523,12 @@ export function computeIncomeExpenseRatio(expenses, income) {
   // Try current month first; fall back to previous month if no income yet
   let activeMonth = curMonth;
   let totalIncome = (income ?? [])
-    .filter(r => getYYYYMM(r.date) === curMonth)
+    .filter(r => getYYYYMM(r.date) === curMonth && !_isLendingInc(r))
     .reduce((s, r) => s + (Number(r.amount) || 0), 0);
 
   if (totalIncome <= 0) {
     const prevIncome = (income ?? [])
-      .filter(r => getYYYYMM(r.date) === prevMonth)
+      .filter(r => getYYYYMM(r.date) === prevMonth && !_isLendingInc(r))
       .reduce((s, r) => s + (Number(r.amount) || 0), 0);
     if (prevIncome > 0) {
       activeMonth = prevMonth;
@@ -536,6 +539,7 @@ export function computeIncomeExpenseRatio(expenses, income) {
   const catTotals = new Map();
   for (const e of (expenses ?? [])) {
     if (getYYYYMM(e.date) !== activeMonth) continue;
+    if (_isLendingExp(e)) continue;
     const cat = e.category ?? 'Other';
     catTotals.set(cat, (catTotals.get(cat) ?? 0) + (Number(e.amount) || 0));
   }

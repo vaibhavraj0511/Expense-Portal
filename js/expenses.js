@@ -11,7 +11,7 @@ import { createPaginator } from './paginate.js';
 import { showUndoToast } from './undo.js';
 
 // ─── Serialization (Task 5.1) ────────────────────────────────────────────────
-// Column order: A=date, B=category, C=subCategory, D=amount, E=description, F=paymentMethod, G=tags
+// Column order: A=date, B=category, C=subCategory, D=amount, E=description, F=paymentMethod, G=tags, H=time
 
 /**
  * Converts an ExpenseRecord object to a row array for Google Sheets.
@@ -27,6 +27,7 @@ export function serialize(record) {
     record.description,
     record.paymentMethod,
     (record.tags ?? []).join(','),
+    record.time ?? '',
   ];
 }
 
@@ -44,6 +45,7 @@ export function deserialize(row) {
     description: row[4] ?? '',
     paymentMethod: row[5] ?? '',
     tags: row[6] ? row[6].split(',').map(t => t.trim()).filter(Boolean) : [],
+    time: row[7] ?? '',
   };
 }
 
@@ -151,6 +153,15 @@ function _catColor(str) {
   return _CAT_PALETTE[h % _CAT_PALETTE.length];
 }
 
+// ─── Time formatter ─────────────────────────────────────────────────────────
+function _fmtTime(t) {
+  if (!t) return '';
+  const [h, m] = t.split(':').map(Number);
+  if (isNaN(h) || isNaN(m)) return t;
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  return `${h % 12 || 12}:${String(m).padStart(2, '0')} ${ampm}`;
+}
+
 // ─── Payment-type icon map ────────────────────────────────────────────────────
 function _pmIcon(method) {
   const m = String(method ?? '').toLowerCase();
@@ -233,7 +244,7 @@ function _getPaginator() {
                   <i class="bi ${pmIcon}"></i>${escapeHtml(r.paymentMethod)}
                 </span>
               </td>
-              <td class="cpt-date">${formatDate(r.date)}</td>
+              <td class="cpt-date">${formatDate(r.date)}${r.time ? `<div class="cpt-time">${_fmtTime(r.time)}</div>` : ''}</td>
               <td class="cpt-amt cpt-amt--expense">${formatCurrency(r.amount)}</td>
               <td class="cpt-actions">
                 <button class="cpt-action-btn cpt-action-btn--edit" data-edit-idx="${r._idx}" title="Edit"><i class="bi bi-pencil-fill"></i></button>
@@ -293,9 +304,9 @@ export function render() {
       if (_sortCol === 'amount') {
         return _sortDir === 'desc' ? b.amount - a.amount : a.amount - b.amount;
       }
-      // default: date
-      if (_sortDir === 'asc') return (a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
-      return (b.date < a.date ? -1 : b.date > a.date ? 1 : 0);
+      // default: date then time
+      if (_sortDir === 'asc') return a.date < b.date ? -1 : a.date > b.date ? 1 : (a.time ?? '') < (b.time ?? '') ? -1 : (a.time ?? '') > (b.time ?? '') ? 1 : 0;
+      return b.date < a.date ? -1 : b.date > a.date ? 1 : (b.time ?? '') < (a.time ?? '') ? -1 : (b.time ?? '') > (a.time ?? '') ? 1 : 0;
     });
   _filteredCount = filtered.length;
   _filteredTotal = filtered.reduce((s, r) => s + (Number(r.amount) || 0), 0);
@@ -794,6 +805,17 @@ function _bindForm() {
   const form = document.getElementById('expense-form');
   if (!form) return;
 
+  // Auto-fill current time when opening the modal for a new entry
+  document.getElementById('oc-expense')?.addEventListener('show.bs.modal', () => {
+    if (_editingIndex === null) {
+      const ti = document.getElementById('expense-time');
+      if (ti) {
+        const n = new Date();
+        ti.value = `${String(n.getHours()).padStart(2,'0')}:${String(n.getMinutes()).padStart(2,'0')}`;
+      }
+    }
+  });
+
   // Bind tag input widget
   _bindTagInput();
 
@@ -882,6 +904,7 @@ function _bindForm() {
     clearFieldErrors(form);
 
     const date = form.querySelector('#expense-date')?.value?.trim() ?? '';
+    const time = form.querySelector('#expense-time')?.value?.trim() ?? '';
     const category = form.querySelector('#expense-category')?.value?.trim() ?? '';
     const subCategory = form.querySelector('#expense-subcategory')?.value?.trim() ?? '';
     const amount = form.querySelector('#expense-amount')?.value?.trim() ?? '';
@@ -904,7 +927,7 @@ function _bindForm() {
     if (!amtResult.valid) { showFieldError('expense-amount', amtResult.errors[0]); hasErrors = true; }
     if (hasErrors) return;
 
-    const record = { date, category, subCategory, amount: parseFloat(amount), description, paymentMethod, tags: _getFormTags() };
+    const record = { date, time, category, subCategory, amount: parseFloat(amount), description, paymentMethod, tags: _getFormTags() };
 
     // Duplicate check (skip when force-saving)
     if (!_forceExpenseSave && _checkDuplicate(date, category, parseFloat(amount))) {
@@ -975,6 +998,8 @@ function _startEdit(idx) {
 
   if (form) {
     form.querySelector('#expense-date').value = r.date;
+    const timeInput = form.querySelector('#expense-time');
+    if (timeInput) timeInput.value = r.time ?? '';
     form.querySelector('#expense-amount').value = r.amount;
     form.querySelector('#expense-description').value = r.description;
 

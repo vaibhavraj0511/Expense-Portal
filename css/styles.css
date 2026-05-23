@@ -14289,6 +14289,7 @@ body          { background: #f5f7fa !important; }
 
 .cpt td { padding: .55rem .75rem; color: #334155; vertical-align: middle; border: none; }
 .cpt-date    { color: #94a3b8; font-size: .76rem; white-space: nowrap; width: 90px; }
+.cpt-time    { color: #64748b; font-size: .7rem; margin-top: .1rem; font-weight: 500; }
 .cpt-desc    { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #0f172a; font-weight: 500; }
 .cpt-account { color: #64748b; font-size: .78rem; white-space: nowrap; }
 .cpt-cat     { display: inline-block; padding: .18rem .55rem; border-radius: 20px; font-size: .71rem; font-weight: 700; border: 1px solid; white-space: nowrap; letter-spacing: .01em; }
@@ -16076,22 +16077,28 @@ body          { background: #f5f7fa !important; }
   display: inline-flex; align-items: center;
 }
 
-/* ── Mark Paid button — green labeled primary action ── */
+/* ── Mark Paid button — solid green primary action pill ── */
 .bill-pay-btn {
-  background: #f0fdf4 !important;
-  color: #059669 !important;
-  border: 1px solid #bbf7d0 !important;
+  background: linear-gradient(135deg,#10b981,#059669) !important;
+  color: #fff !important;
+  border: none !important;
   font-size: .72rem !important;
   font-weight: 600 !important;
-  padding: .25rem .55rem !important;
-  border-radius: 6px !important;
+  padding: .28rem .75rem !important;
+  border-radius: 20px !important;
   white-space: nowrap;
+  width: auto !important;
+  height: auto !important;
+  box-shadow: 0 2px 6px rgba(16,185,129,.35) !important;
+  letter-spacing: .01em;
+  transition: background .15s, box-shadow .15s, transform .12s !important;
 }
 .bill-pay-btn:hover:not(.disabled) {
-  background: #dcfce7 !important;
-  color: #047857 !important;
-  border-color: #86efac !important;
+  background: linear-gradient(135deg,#059669,#047857) !important;
+  box-shadow: 0 4px 12px rgba(16,185,129,.45) !important;
+  transform: translateY(-1px);
 }
+.bill-pay-btn:active:not(.disabled) { transform: translateY(0); }
 .bill-pay-btn.disabled { opacity: .4 !important; cursor: not-allowed !important; }
 
 /* ── Pause button (gray) / Resume button (green) ── */
@@ -16942,3 +16949,175 @@ body          { background: #f5f7fa !important; }
   body, html { overflow-x: hidden; }
   .ep-main { overflow-x: hidden; }
 }
+
+/* ── Maintenance Gap Analyzer ──────────────────────────────────────────────── */
+.gap-vehicle-group  { margin-bottom: 1.5rem; }
+.gap-vehicle-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: .75rem;
+}
+.gap-vehicle-label  {
+  font-size: .72rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .08em; color: #6366f1;
+  display: flex; align-items: center; gap: .3rem;
+}
+
+/* Health Score badge */
+.gap-health-score {
+  display: flex; flex-direction: column; align-items: center;
+  width: 48px; height: 48px; border-radius: 50%; justify-content: center;
+  border: 2.5px solid transparent; flex-shrink: 0;
+}
+.gap-hs--good { border-color: #10b981; background: #f0fdf4; }
+.gap-hs--warn { border-color: #f59e0b; background: #fffbeb; }
+.gap-hs--poor { border-color: #ef4444; background: #fef2f2; }
+.gap-hs-num   { font-size: .85rem; font-weight: 800; line-height: 1; }
+.gap-hs--good .gap-hs-num { color: #15803d; }
+.gap-hs--warn .gap-hs-num { color: #92400e; }
+.gap-hs--poor .gap-hs-num { color: #b91c1c; }
+.gap-hs-label { font-size: .52rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: #94a3b8; }
+
+/* Smart Alerts */
+.gap-alerts-wrap { display: flex; flex-direction: column; gap: .5rem; margin-bottom: .85rem; }
+.gap-alert {
+  display: flex; align-items: center; gap: .75rem;
+  padding: .6rem .9rem; border-radius: 10px; border-left: 4px solid transparent;
+}
+.gap-alert--overdue { background: #fef2f2; border-color: #ef4444; }
+.gap-alert--soon    { background: #fffbeb; border-color: #f59e0b; }
+.gap-alert-icon     { font-size: 1.1rem; flex-shrink: 0; }
+.gap-alert--overdue .gap-alert-icon { color: #ef4444; }
+.gap-alert--soon    .gap-alert-icon { color: #f59e0b; }
+.gap-alert-title { font-size: .82rem; font-weight: 600; color: #1e293b; }
+.gap-alert-sub   { font-size: .72rem; color: #64748b; margin-top: 1px; }
+
+/* Next-due prediction pills on card header */
+.gap-next-due {
+  font-size: .68rem; font-weight: 600; border-radius: 20px;
+  padding: 2px 9px; white-space: nowrap;
+  display: inline-flex; align-items: center;
+}
+.gap-next--ok      { background: #f0fdf4; color: #15803d; }
+.gap-next--soon    { background: #fffbeb; color: #92400e; }
+.gap-next--overdue { background: #fef2f2; color: #b91c1c; }
+
+/* Card per expense type */
+.gap-type-card {
+  border: 1.5px solid #e2e8f0; border-radius: 12px;
+  overflow: hidden; margin-bottom: .85rem;
+  box-shadow: 0 1px 4px rgba(0,0,0,.05);
+}
+.gap-type-card-hd {
+  display: flex; align-items: center; gap: .7rem;
+  padding: .6rem .9rem; background: #f8fafc;
+  border-bottom: 1px solid #e2e8f0; flex-wrap: wrap;
+}
+.gap-tc-toggle {
+  cursor: pointer; user-select: none;
+  transition: background .15s;
+}
+.gap-tc-toggle:hover { background: #f1f5f9; }
+.gap-tc-chevron { color: #94a3b8; font-size: .75rem; flex-shrink: 0; transition: transform .2s; }
+.gap-tc-icon {
+  width: 30px; height: 30px; border-radius: 8px; flex-shrink: 0;
+  background: linear-gradient(135deg,#6366f1,#4338ca);
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; font-size: .78rem;
+}
+.gap-tc-title     { flex: 1; min-width: 0; }
+.gap-tc-name      { font-weight: 600; font-size: .9rem; color: #1e293b; line-height: 1.2; }
+.gap-tc-sub       { font-size: .68rem; color: #94a3b8; margin-top: 1px; }
+.gap-avg-hint     {
+  font-size: .7rem; color: #4f46e5; background: #eef2ff;
+  border-radius: 20px; padding: 3px 10px; white-space: nowrap;
+  display: flex; align-items: center;
+}
+
+/* Table */
+.gap-tc-table   { background: #fff; }
+.gap-tc-head    {
+  background: #f1f5f9; border-bottom: 1px solid #e2e8f0;
+  font-size: .68rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .06em; color: #64748b;
+}
+.gap-tc-row     {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 110px;
+  align-items: center; padding: .55rem 1rem;
+  border-bottom: 1px solid #f1f5f9; gap: .5rem;
+  font-size: .8rem; color: #334155;
+}
+.gap-tc-row:last-child    { border-bottom: none; }
+.gap-tc-head.gap-tc-row   { padding: .4rem 1rem; }
+.gap-tc-date  { color: #64748b; font-size: .75rem; }
+.gap-tc-days, .gap-tc-km  { font-weight: 600; font-size: .82rem; color: #1e293b; }
+.gap-tc-nodata { font-weight: 400; color: #94a3b8; font-style: italic; font-size: .75rem; }
+.gap-tc-status { display: flex; justify-content: flex-end; }
+
+/* Mini progress bar inside cells */
+.gap-bar {
+  width: 100%; height: 4px; background: #e2e8f0;
+  border-radius: 4px; margin-top: 4px; overflow: hidden;
+}
+.gap-bar-fill { height: 100%; border-radius: 4px; transition: width .3s; }
+
+/* Status pills */
+.gap-pill {
+  display: inline-flex; align-items: center; font-size: .68rem;
+  font-weight: 600; padding: 3px 9px; border-radius: 20px;
+  white-space: nowrap;
+}
+.gap-pill--good    { background: #dcfce7; color: #15803d; }
+.gap-pill--early   { background: #fef9c3; color: #92400e; }
+.gap-pill--overdue { background: #fee2e2; color: #b91c1c; }
+.gap-pill--neutral { background: #f1f5f9; color: #64748b; }
+.gap-pending-hint  {
+  font-size: .7rem; color: #92400e; background: #fef3c7;
+  border-radius: 20px; padding: 3px 10px; white-space: nowrap;
+  display: flex; align-items: center;
+}
+
+/* Empty state */
+.gap-empty {
+  padding: 1.5rem; text-align: center; font-size: .85rem;
+  color: #64748b; background: #f8fafc; border-radius: 12px;
+  border: 1.5px dashed #e2e8f0;
+}
+
+@media (max-width: 640px) {
+  .gap-tc-row {
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: auto auto;
+  }
+  .gap-tc-status { justify-content: flex-start; }
+  .gap-avg-hint  { margin-left: 0; }
+  .gap-next-due  { margin-left: 0; }
+}
+
+/* ── Cost Per KM row ─────────────────────────────────────────────────────── */
+.gap-kpm-row  { display: flex; flex-wrap: wrap; gap: .75rem; }
+.gap-kpm-card {
+  flex: 1; min-width: 140px;
+  background: #f8fafc; border: 1.5px solid #e2e8f0; border-radius: 12px;
+  padding: .7rem 1rem; text-align: center;
+}
+.gap-kpm-vehicle { font-size: .7rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: #64748b; margin-bottom: .2rem; }
+.gap-kpm-value   { font-size: 1.4rem; font-weight: 800; color: #6366f1; line-height: 1.1; }
+.gap-kpm-unit    { font-size: .75rem; font-weight: 500; color: #94a3b8; margin-left: 2px; }
+.gap-kpm-sub     { font-size: .68rem; color: #94a3b8; margin-top: .25rem; }
+
+/* ── Chart grid ──────────────────────────────────────────────────────────── */
+.gap-charts-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1rem;
+}
+.gap-chart-wrap {
+  background: #f8fafc; border: 1.5px solid #e2e8f0; border-radius: 12px;
+  padding: .85rem 1rem;
+}
+.gap-chart-label {
+  font-size: .72rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .06em; color: #64748b; margin-bottom: .6rem;
+}
+.gap-chart-canvas-wrap { position: relative; height: 220px; }
