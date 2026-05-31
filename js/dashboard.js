@@ -26,6 +26,8 @@ let _netChart           = null;
 let _yearChart          = null;
 let _netWorthHistChart  = null;
 let _savingsRateChart   = null;
+let _savingsSparkChart  = null;
+let _overallSparkChart  = null;
 
 function escapeHtml(str) {
   return String(str)
@@ -55,6 +57,7 @@ export function render() {
   _renderTrendChart();
   _renderNetSavingsChart();
   _renderYearComparison();
+  _renderYoYPanel();
   _renderSavingsProgress();
   _renderSpendingInsights();
   _renderMaintenanceReminders();
@@ -439,6 +442,87 @@ function _renderSavingsRate() {
     statusEl.textContent = status;
     statusEl.style.color = statusColor;
   }
+
+  // ── 6-month sparkline ───────────────────────────────────────────────────
+  const sparkCanvas = el('dash-savings-sparkline');
+  if (!sparkCanvas || typeof Chart === 'undefined') return;
+
+  const allExp = store.get('expenses') ?? [];
+  const allInc = store.get('income')   ?? [];
+  const now2   = new Date();
+  const MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+  const sparkLabels = [];
+  const sparkRates  = [];
+  const sparkColors = [];
+  const sparkBgColors = [];
+
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(now2.getFullYear(), now2.getMonth() - i, 1);
+    const y = d.getFullYear(), m = d.getMonth();
+    const mInc = allInc.filter(r => {
+      if (!r.date) return false;
+      return parseInt(r.date.slice(0,4)) === y && parseInt(r.date.slice(5,7)) - 1 === m && !_isLendingInc(r);
+    }).reduce((s,r) => s + r.amount, 0);
+    const mExp = allExp.filter(r => {
+      if (!r.date) return false;
+      return parseInt(r.date.slice(0,4)) === y && parseInt(r.date.slice(5,7)) - 1 === m && !_isLendingExp(r);
+    }).reduce((s,r) => s + r.amount, 0);
+    const sr = mInc > 0 ? Math.round(((mInc - mExp) / mInc) * 100) : 0;
+    sparkLabels.push(MONTHS_SHORT[m]);
+    sparkRates.push(sr);
+    const c = sr >= 20 ? '#10b981' : sr >= 0 ? '#f59e0b' : '#ef4444';
+    sparkColors.push(c);
+    sparkBgColors.push(c + '33');
+  }
+
+  if (_savingsSparkChart) { _savingsSparkChart.destroy(); _savingsSparkChart = null; }
+  _savingsSparkChart = new Chart(sparkCanvas, {
+    type: 'line',
+    data: {
+      labels: sparkLabels,
+      datasets: [{
+        data: sparkRates,
+        borderColor: sparkColors[sparkColors.length - 1],
+        backgroundColor: ctx => {
+          const g = ctx.chart.ctx.createLinearGradient(0, 0, 0, ctx.chart.height);
+          g.addColorStop(0, sparkColors[sparkColors.length - 1] + '55');
+          g.addColorStop(1, sparkColors[sparkColors.length - 1] + '00');
+          return g;
+        },
+        borderWidth: 2,
+        pointRadius: 3,
+        pointHoverRadius: 5,
+        pointBackgroundColor: sparkColors,
+        pointBorderColor: '#fff',
+        pointBorderWidth: 1.5,
+        tension: 0.4,
+        fill: true,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: ctx => ` ${ctx.raw}% savings rate`,
+          },
+        },
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { font: { size: 10 }, color: '#94a3b8' } },
+        y: {
+          display: true,
+          grid: { color: '#f1f5f9' },
+          ticks: { callback: v => v + '%', font: { size: 9 }, color: '#94a3b8', maxTicksLimit: 4 },
+          suggestedMin: Math.min(...sparkRates) - 5,
+          suggestedMax: Math.max(...sparkRates, 20) + 5,
+        },
+      },
+    },
+  });
 }
 
 function _renderOverallSavingsRate() {
@@ -539,6 +623,83 @@ function _renderOverallSavingsRate() {
       trendEl.style.color = '#94a3b8';
     }
   }
+
+  // ── 12-month sparkline ───────────────────────────────────────────────────
+  const overallSparkCanvas = el('dash-overall-sparkline');
+  if (!overallSparkCanvas || typeof Chart === 'undefined') return;
+
+  const now3 = new Date();
+  const MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+  const overallLabels = [];
+  const overallRates  = [];
+  const overallColors = [];
+
+  for (let i = 11; i >= 0; i--) {
+    const d = new Date(now3.getFullYear(), now3.getMonth() - i, 1);
+    const y = d.getFullYear(), m = d.getMonth();
+    const mInc = income.filter(r => {
+      if (!r.date) return false;
+      return parseInt(r.date.slice(0,4)) === y && parseInt(r.date.slice(5,7)) - 1 === m && !_isLendingInc(r);
+    }).reduce((s,r) => s + r.amount, 0);
+    const mExp = expenses.filter(r => {
+      if (!r.date) return false;
+      return parseInt(r.date.slice(0,4)) === y && parseInt(r.date.slice(5,7)) - 1 === m && !_isLendingExp(r);
+    }).reduce((s,r) => s + r.amount, 0);
+    const sr = mInc > 0 ? Math.round(((mInc - mExp) / mInc) * 100) : 0;
+    overallLabels.push(MONTHS_SHORT[m]);
+    overallRates.push(sr);
+    const c = sr >= 20 ? '#10b981' : sr >= 0 ? '#f59e0b' : '#ef4444';
+    overallColors.push(c);
+  }
+
+  if (_overallSparkChart) { _overallSparkChart.destroy(); _overallSparkChart = null; }
+  _overallSparkChart = new Chart(overallSparkCanvas, {
+    type: 'line',
+    data: {
+      labels: overallLabels,
+      datasets: [{
+        data: overallRates,
+        borderColor: overallColors[overallColors.length - 1],
+        backgroundColor: ctx => {
+          const g = ctx.chart.ctx.createLinearGradient(0, 0, 0, ctx.chart.height);
+          g.addColorStop(0, overallColors[overallColors.length - 1] + '55');
+          g.addColorStop(1, overallColors[overallColors.length - 1] + '00');
+          return g;
+        },
+        borderWidth: 2,
+        pointRadius: 3,
+        pointHoverRadius: 5,
+        pointBackgroundColor: overallColors,
+        pointBorderColor: '#fff',
+        pointBorderWidth: 1.5,
+        tension: 0.4,
+        fill: true,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: ctx => ` ${ctx.raw}% savings rate`,
+          },
+        },
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { font: { size: 10 }, color: '#94a3b8' } },
+        y: {
+          display: true,
+          grid: { color: '#f1f5f9' },
+          ticks: { callback: v => v + '%', font: { size: 9 }, color: '#94a3b8', maxTicksLimit: 4 },
+          suggestedMin: Math.min(...overallRates) - 5,
+          suggestedMax: Math.max(...overallRates, 20) + 5,
+        },
+      },
+    },
+  });
 }
 
 function _renderHeatmap() {
@@ -599,15 +760,16 @@ function _renderHeatmap() {
       const isFuture = dateStr > todayStr;
       const isToday = dateStr === todayStr;
 
-      let bg = '#ebedf0';
+      // New palette: neutral gray for no-spend days, blue → indigo → violet for higher spend
+      let bg = '#e5e7eb'; // muted gray for no spend
       if (!isFuture && spend > 0) {
         const intensity = spend / maxSpend;
-        if (intensity < 0.15)      bg = '#9be9a8';
-        else if (intensity < 0.35) bg = '#40c463';
-        else if (intensity < 0.6)  bg = '#30a14e';
-        else                       bg = '#216e39';
+        if (intensity < 0.15)      bg = '#dbeafe';   // very light blue
+        else if (intensity < 0.35) bg = '#a5b4fc';   // soft indigo
+        else if (intensity < 0.6)  bg = '#6366f1';   // indigo
+        else                       bg = '#7c3aed';   // violet for highest spend
       }
-      if (isFuture) bg = '#f6f8fa';
+      if (isFuture) bg = '#f9fafb';
 
       const border = isToday ? 'box-shadow:inset 0 0 0 2px #6366f1;' : '';
       const title  = isFuture ? '' : spend > 0
@@ -1568,6 +1730,116 @@ function _renderYearComparison() {
   });
 }
 
+function _renderYoYPanel() {
+  const container = document.getElementById('dash-yoy-container');
+  const subtitle  = document.getElementById('dash-yoy-subtitle');
+  if (!container) return;
+
+  const expenses = store.get('expenses') ?? [];
+  const income   = store.get('income')   ?? [];
+  const now = new Date();
+  const curY = now.getFullYear(), curM = now.getMonth(); // 0-based
+  const prevY = curY - 1;
+  const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+  const filterMonth = (arr, y, m) => arr.filter(r => {
+    if (!r.date) return false;
+    return parseInt(r.date.slice(0,4)) === y && parseInt(r.date.slice(5,7)) - 1 === m;
+  });
+
+  const sumAmt = arr => arr.reduce((s, r) => s + (r.amount || 0), 0);
+
+  const curInc  = sumAmt(filterMonth(income,   curY,  curM).filter(r => !_isLendingInc(r)));
+  const curExp  = sumAmt(filterMonth(expenses, curY,  curM).filter(r => !_isLendingExp(r)));
+  const curNet  = curInc - curExp;
+
+  const prevInc = sumAmt(filterMonth(income,   prevY, curM).filter(r => !_isLendingInc(r)));
+  const prevExp = sumAmt(filterMonth(expenses, prevY, curM).filter(r => !_isLendingExp(r)));
+  const prevNet = prevInc - prevExp;
+
+  if (subtitle) subtitle.textContent = `${MONTH_NAMES[curM]} ${curY} vs ${MONTH_NAMES[curM]} ${prevY}`;
+
+  const delta = (cur, prev) => {
+    if (prev === 0) return null;
+    return Math.round(((cur - prev) / prev) * 100);
+  };
+
+  const badge = (pct, invert = false) => {
+    if (pct === null) return `<span class="yoy-badge yoy-badge--neutral">No prev data</span>`;
+    const better = invert ? pct < 0 : pct > 0;
+    const cls = pct === 0 ? 'yoy-badge--neutral' : better ? 'yoy-badge--good' : 'yoy-badge--bad';
+    const icon = pct > 0 ? 'bi-arrow-up' : pct < 0 ? 'bi-arrow-down' : 'bi-dash';
+    return `<span class="yoy-badge ${cls}"><i class="bi ${icon} me-1"></i>${Math.abs(pct)}%</span>`;
+  };
+
+  const fmt = v => formatCurrency(Math.abs(Math.round(v)));
+  const fmtNet = v => (v >= 0 ? '' : '−') + fmt(v);
+
+  const rows = [
+    { label: 'Income',   cur: curInc, prev: prevInc, icon: 'bi-bank2',        color: '#10b981', invert: false },
+    { label: 'Expenses', cur: curExp, prev: prevExp, icon: 'bi-receipt',       color: '#ef4444', invert: true  },
+    { label: 'Net Saved',cur: curNet, prev: prevNet, icon: 'bi-piggy-bank-fill',color:'#6366f1', invert: false },
+  ];
+
+  // Also compute top categories this month vs last year
+  const catMap = (arr, y, m) => {
+    const map = {};
+    filterMonth(arr, y, m).filter(r => !_isLendingExp(r)).forEach(r => {
+      map[r.category] = (map[r.category] ?? 0) + r.amount;
+    });
+    return map;
+  };
+  const curCats  = catMap(expenses, curY,  curM);
+  const prevCats = catMap(expenses, prevY, curM);
+  const allCats  = [...new Set([...Object.keys(curCats), ...Object.keys(prevCats)])].sort((a,b) => (curCats[b]||0) - (curCats[a]||0)).slice(0, 5);
+
+  container.innerHTML = `
+    <div class="yoy-grid">
+      ${rows.map(r => `
+        <div class="yoy-metric-card">
+          <div class="yoy-metric-icon" style="background:${r.color}22;color:${r.color}"><i class="bi ${r.icon}"></i></div>
+          <div class="yoy-metric-label">${r.label}</div>
+          <div class="yoy-cols">
+            <div class="yoy-col yoy-col--cur">
+              <div class="yoy-col-lbl">${MONTH_NAMES[curM]} '${String(curY).slice(2)}</div>
+              <div class="yoy-col-val">${fmtNet(r.cur)}</div>
+            </div>
+            <div class="yoy-divider"><i class="bi bi-arrow-left-right" style="font-size:.75rem;color:#94a3b8"></i></div>
+            <div class="yoy-col yoy-col--prev">
+              <div class="yoy-col-lbl">${MONTH_NAMES[curM]} '${String(prevY).slice(2)}</div>
+              <div class="yoy-col-val yoy-prev-val">${prevInc + prevExp + Math.abs(prevNet) === 0 ? '—' : fmtNet(r.prev)}</div>
+            </div>
+          </div>
+          <div class="mt-2">${badge(delta(r.cur, r.prev), r.invert)}</div>
+        </div>`).join('')}
+    </div>
+    ${allCats.length ? `
+    <div class="yoy-cat-section">
+      <div class="yoy-cat-title"><i class="bi bi-tags-fill me-1 text-primary"></i>Top Categories — ${MONTH_NAMES[curM]}</div>
+      <div class="yoy-cat-rows">
+        ${allCats.map(cat => {
+          const c = curCats[cat] || 0, p = prevCats[cat] || 0;
+          const max = Math.max(c, p, 1);
+          const d = delta(c, p);
+          return `<div class="yoy-cat-row">
+            <div class="yoy-cat-name">${escapeHtml(cat)}</div>
+            <div class="yoy-cat-bars">
+              <div class="yoy-cat-bar-wrap" title="${MONTH_NAMES[curM]} ${curY}: ${formatCurrency(Math.round(c))}">
+                <div class="yoy-cat-bar yoy-bar--cur" style="width:${Math.round((c/max)*100)}%"></div>
+                <span class="yoy-cat-barval">${formatCurrency(Math.round(c))}</span>
+              </div>
+              <div class="yoy-cat-bar-wrap" title="${MONTH_NAMES[curM]} ${prevY}: ${formatCurrency(Math.round(p))}">
+                <div class="yoy-cat-bar yoy-bar--prev" style="width:${Math.round((p/max)*100)}%"></div>
+                <span class="yoy-cat-barval yoy-prev-val">${p > 0 ? formatCurrency(Math.round(p)) : '—'}</span>
+              </div>
+            </div>
+            <div class="yoy-cat-delta">${badge(d, true)}</div>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>` : ''}`;
+}
+
 function _renderNetWorthHistoryChart() {
   const canvas = document.getElementById('dash-networth-hist-chart');
   if (!canvas) return;
@@ -2089,6 +2361,8 @@ export function init() {
   store.on('recurring',    _renderPaymentReminders);
   store.on('subscriptions',_renderPaymentReminders);
   store.on('expenses', _renderYearComparison);
+  store.on('expenses', _renderYoYPanel);
+  store.on('income',   _renderYoYPanel);
   store.on('expenses', _renderNetWorthHistoryChart);
   store.on('income',   _renderNetWorthHistoryChart);
   store.on('accounts', _renderNetWorthHistoryChart);

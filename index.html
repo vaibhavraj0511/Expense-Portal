@@ -114,6 +114,11 @@
             <span class="nav-label">AI Insights</span>
             <span class="nav-badge">AI</span>
           </button>
+          <button class="ep-nav-item" data-tab="tab-advisor">
+            <span class="nav-icon" style="color:#ec4899;background:rgba(236,72,153,.12)"><i class="bi bi-robot"></i></span>
+            <span class="nav-label">AI Advisor</span>
+            <span class="nav-badge" style="background:linear-gradient(135deg,#ec4899,#8b5cf6)">NEW</span>
+          </button>
         </div>
 
         <!-- ── Transactions ── -->
@@ -641,6 +646,10 @@
                       <div class="col-6"><div class="mini-stat-box msb-slate"><div class="mini-stat-box-lbl">Spend Buffer</div><div id="dash-savings-buffer" class="mini-stat-box-val">₹0</div></div></div>
                       <div class="col-6"><div class="mini-stat-box msb-green"><div class="mini-stat-box-lbl">Status</div><div id="dash-savings-status" class="mini-stat-box-val" style="color:#10b981">—</div></div></div>
                     </div>
+                    <div class="sav-spark-wrap mt-3">
+                      <div class="sav-spark-lbl"><i class="bi bi-graph-up me-1"></i>6-Month Savings Rate Trend</div>
+                      <div class="sav-spark-canvas-wrap"><canvas id="dash-savings-sparkline"></canvas></div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -669,6 +678,10 @@
                       <div class="col-6"><div class="mini-stat-box msb-teal"><div class="mini-stat-box-lbl">Avg/Month</div><div id="dash-overall-avg" class="mini-stat-box-val">₹0</div></div></div>
                       <div class="col-6"><div class="mini-stat-box msb-amber"><div class="mini-stat-box-lbl">Best Month</div><div id="dash-overall-best" class="mini-stat-box-val">—</div></div></div>
                       <div class="col-6"><div class="mini-stat-box msb-purple"><div class="mini-stat-box-lbl">Positive Months</div><div id="dash-overall-positive" class="mini-stat-box-val">0</div></div></div>
+                    </div>
+                    <div class="sav-spark-wrap mt-3">
+                      <div class="sav-spark-lbl"><i class="bi bi-graph-up me-1"></i>12-Month Savings Rate Trend</div>
+                      <div class="sav-spark-canvas-wrap"><canvas id="dash-overall-sparkline"></canvas></div>
                     </div>
                   </div>
                 </div>
@@ -701,6 +714,23 @@
 
             <!-- ═══ ZONE 5: ANALYTICS ═══ -->
             <div class="dash-section-hdr"><i class="bi bi-bar-chart-line-fill"></i>Analytics</div>
+
+            <!-- Year-over-Year comparison -->
+            <div class="row g-3 mb-3">
+              <div class="col-12">
+                <div class="card" id="dash-yoy-card">
+                  <div class="card-header fw-semibold d-flex align-items-center gap-2 flex-wrap">
+                    <i class="bi bi-calendar2-range-fill text-primary me-1"></i>
+                    Year-over-Year Comparison
+                    <span id="dash-yoy-subtitle" class="text-muted small fw-normal ms-1"></span>
+                  </div>
+                  <div class="card-body p-3" id="dash-yoy-container">
+                    <p class="text-muted small mb-0">Add expenses to see the year-over-year breakdown.</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <div class="row g-3">
               <div class="col-lg-5">
                 <div class="card h-100">
@@ -757,6 +787,44 @@
                   </div>
                   <div class="card-body">
                     <canvas id="dash-networth-hist-chart" style="max-height:260px"></canvas>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- ═══ SPENDING HEATMAP ═══ -->
+            <div class="row g-3 mt-1">
+              <div class="col-12">
+                <div class="card">
+                  <div class="card-header fw-semibold d-flex align-items-center gap-2 flex-wrap">
+                    <i class="bi bi-calendar3-fill text-primary me-1"></i> Spending Heatmap
+                    <span class="text-muted small fw-normal ms-1">Daily spend intensity — last 52 weeks</span>
+                    <div class="hm-legend ms-auto d-flex align-items-center gap-1">
+                      <span class="hm-legend-lbl">Less</span>
+                      <span class="hm-legend-cell" style="background:#e5e7eb"></span>
+                      <span class="hm-legend-cell" style="background:#dbeafe"></span>
+                      <span class="hm-legend-cell" style="background:#a5b4fc"></span>
+                      <span class="hm-legend-cell" style="background:#6366f1"></span>
+                      <span class="hm-legend-cell" style="background:#7c3aed"></span>
+                      <span class="hm-legend-lbl">More</span>
+                    </div>
+                  </div>
+                  <div class="card-body p-3 pb-2">
+                    <div class="hm-outer">
+                      <div class="hm-day-labels">
+                        <span>Sun</span>
+                        <span>Mon</span>
+                        <span>Tue</span>
+                        <span>Wed</span>
+                        <span>Thu</span>
+                        <span>Fri</span>
+                        <span>Sat</span>
+                      </div>
+                      <div class="hm-right">
+                        <div class="hm-months-row" id="dash-heatmap-months"></div>
+                        <div class="hm-grid" id="dash-heatmap"></div>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -838,40 +906,6 @@
                     <div class="card-body pt-3">
                       <div id="dash-subcat-breakdown">
                         <p class="text-muted small mb-0">No subcategory data yet.</p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <div class="row g-3 mt-1">
-                <div class="col-12">
-                  <div class="card">
-                    <div class="card-body p-3">
-                      <div class="d-flex justify-content-between align-items-center mb-3">
-                        <div>
-                          <div class="fw-semibold" style="font-size:.85rem">Daily Spending Heatmap</div>
-                          <div class="text-muted" style="font-size:.72rem">Last 52 weeks — darker = more spent</div>
-                        </div>
-                        <div class="d-flex align-items-center gap-1" style="font-size:.68rem;color:#94a3b8">
-                          <span>Less</span>
-                          <span class="hm-legend-dot" style="background:#ebedf0"></span>
-                          <span class="hm-legend-dot" style="background:#9be9a8"></span>
-                          <span class="hm-legend-dot" style="background:#40c463"></span>
-                          <span class="hm-legend-dot" style="background:#30a14e"></span>
-                          <span class="hm-legend-dot" style="background:#216e39"></span>
-                          <span>More</span>
-                        </div>
-                      </div>
-                      <div class="hm-wrap">
-                        <div class="hm-row-labels">
-                          <span></span>
-                          <span>Sun</span><span>Mon</span><span>Tue</span>
-                          <span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span>
-                        </div>
-                        <div class="hm-scroll">
-                          <div class="hm-month-row" id="dash-heatmap-months"></div>
-                          <div class="hm-grid" id="dash-heatmap"></div>
-                        </div>
                       </div>
                     </div>
                   </div>
@@ -1105,7 +1139,7 @@
                 <div class="inc-page-hero-icon"><i class="bi bi-graph-up-arrow"></i></div>
                 <div>
                   <div class="inc-page-hero-title">Income</div>
-                  <div class="inc-page-hero-sub" id="inc-hero-sub">Track your earnings</div>
+                  <div class="inc-page-hero-sub">Track your earnings <span id="inc-hero-mom" class="inc-hero-mom-badge d-none"></span></div>
                 </div>
               </div>
               <div class="inc-page-hero-right">
@@ -1159,6 +1193,31 @@
                 </div>
               </div>
             </div>
+            <!-- Salary Hike Log -->
+            <div class="card mb-3" id="salary-hike-card">
+              <div class="card-header fw-semibold d-flex align-items-center gap-2">
+                <i class="bi bi-graph-up-arrow text-success me-1"></i> Salary Progression
+                <span class="sh-auto-hdr-badge ms-1"><i class="bi bi-magic me-1"></i>Auto</span>
+                <button class="btn btn-outline-secondary btn-sm ms-auto" data-bs-toggle="modal" data-bs-target="#oc-salary-hike" title="Override or add a manual hike">
+                  <i class="bi bi-pencil-fill me-1"></i>Manual
+                </button>
+              </div>
+              <div class="card-body p-3">
+                <div id="salary-hike-container"></div>
+              </div>
+            </div>
+
+            <!-- Income Source Breakdown -->
+            <div class="card mb-3" id="income-source-card">
+              <div class="card-header fw-semibold d-flex align-items-center gap-2">
+                <i class="bi bi-pie-chart-fill text-success me-1"></i> Income Source Breakdown
+              </div>
+              <div class="card-body p-3">
+                <div id="income-source-chips" class="inc-source-chips"></div>
+                <p id="income-source-empty" class="text-muted small mb-0 d-none">Add income entries to see how much comes from Salary, Freelance, Rental, and other sources.</p>
+              </div>
+            </div>
+
             <!-- Filter bar (compact: search+dropdowns on row 1, dates+presets on row 2) -->
             <div class="filter-bar-modern filter-bar-modern--income mb-3">
               <div class="inc-filter-main-row">
@@ -1343,7 +1402,8 @@
                   <div class="acc-range-tabs" id="acc-range-tabs">
                     <button class="acc-range-tab" data-range="1m">1M</button>
                     <button class="acc-range-tab" data-range="3m">3M</button>
-                    <button class="acc-range-tab acc-range-tab--active" data-range="6m">6M</button>
+                    <button class="acc-range-tab" data-range="6m">6M</button>
+                    <button class="acc-range-tab acc-range-tab--active" data-range="1y">1Y</button>
                     <button class="acc-range-tab" data-range="all">All</button>
                   </div>
                 </div>
@@ -2619,6 +2679,58 @@
           <div class="tab-pane fade" id="tab-ai-insights" role="tabpanel">
           </div>
           <!-- end ai-insights -->
+
+          <!-- ══════════════════════ AI ADVISOR TAB ══════════════════════ -->
+          <div class="tab-pane fade" id="tab-advisor" role="tabpanel">
+
+            <!-- Main advisor UI -->
+            <div id="advisor-main" class="d-none">
+
+              <!-- Hero bar -->
+              <div class="adv-hero">
+                <div class="adv-hero-left">
+                  <div class="adv-hero-icon"><i class="bi bi-robot"></i></div>
+                  <div>
+                    <div class="adv-hero-title">AI Financial Advisor</div>
+                    <div class="adv-hero-sub">7 personalized financial plans · built from your real data · no API key needed</div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Data snapshot strip -->
+              <div class="adv-snapshot" id="advisor-snapshot">
+                <div class="adv-snap-item">
+                  <i class="bi bi-arrow-down-circle-fill" style="color:#10b981"></i>
+                  <span class="adv-snap-label">Avg Monthly Income</span>
+                  <span class="adv-snap-val" id="adv-snap-income">—</span>
+                </div>
+                <div class="adv-snap-divider"></div>
+                <div class="adv-snap-item">
+                  <i class="bi bi-arrow-up-circle-fill" style="color:#ef4444"></i>
+                  <span class="adv-snap-label">Avg Monthly Expenses</span>
+                  <span class="adv-snap-val" id="adv-snap-expenses">—</span>
+                </div>
+                <div class="adv-snap-divider"></div>
+                <div class="adv-snap-item">
+                  <i class="bi bi-credit-card-fill" style="color:#f59e0b"></i>
+                  <span class="adv-snap-label">Active Loans</span>
+                  <span class="adv-snap-val" id="adv-snap-loans">—</span>
+                </div>
+                <div class="adv-snap-divider"></div>
+                <div class="adv-snap-item">
+                  <i class="bi bi-piggy-bank-fill" style="color:#6366f1"></i>
+                  <span class="adv-snap-label">Monthly Surplus</span>
+                  <span class="adv-snap-val" id="adv-snap-surplus">—</span>
+                </div>
+              </div>
+
+              <!-- 7 Advisor cards -->
+              <div class="adv-grid" id="advisor-grid"></div>
+
+            </div>
+
+          </div>
+          <!-- end advisor -->
 
           <!-- ══════════════════════ RECURRING TAB ══════════════════════ -->
           <div class="tab-pane fade" id="tab-recurring" role="tabpanel">
@@ -4024,7 +4136,7 @@
                   <h6 class="dg-section-title"><i class="bi bi-grid-1x2-fill me-2" style="color:#6366f1"></i>Overview</h6>
                   <p class="dg-section-desc">Your financial health at a glance. The Overview tab shows net worth, savings rate, all-time totals, savings goals progress, and key financial health indicators.</p>
                   <div class="dg-features">
-                    <div class="dg-feature"><strong>Net Worth:</strong> Total assets (accounts, investments) minus liabilities (loans, credit card debt). Gives you your overall financial position. Calculated as (Account Balances + Investments) - (Loans + Credit Card Debt).</div>
+                    <div class="dg-feature"><strong>Net Worth:</strong> Total assets (accounts, investments) minus liabilities (loans, credit card debt). Gives you your overall financial position, plus a 12-month net worth trend chart so you can see how it changes over time. Calculated as (Account Balances + Investments) - (Loans + Credit Card Debt).</div>
                     <div class="dg-feature"><strong>Spend Rate:</strong> Average daily spending based on recent expenses. Helps you understand your spending patterns. Calculated from the last 30 days of expenses divided by 30.</div>
                     <div class="dg-feature"><strong>Savings Rate:</strong> Percentage of income saved. Calculated as (Income - Expenses) / Income. A higher rate indicates better financial health.</div>
                     <div class="dg-feature"><strong>Spending Heatmap:</strong> Visual calendar showing daily spending patterns. Darker colors indicate higher spending days. Helps identify high-spending days of the month.</div>
@@ -4083,7 +4195,9 @@
                     <div class="dg-feature"><strong>Edit/Delete:</strong> Modify or remove income entries. Changes update account balances automatically. Edit opens modal with pre-filled data.</div>
                     <div class="dg-feature"><strong>Search & Filter:</strong> Search income by source or filter by date range or account. Real-time search updates as you type.</div>
                     <div class="dg-feature"><strong>Source Badges:</strong> Visual badges showing income source (salary, freelance, investment, etc.). Each source has its own color.</div>
+                    <div class="dg-feature"><strong>Income Source Breakdown:</strong> A dedicated card on the Income tab summarises how much of your income comes from each source (Salary, Freelance, Rental, etc.) with coloured chips and percentages that respect the active filters.</div>
                     <div class="dg-feature"><strong>Account Linking:</strong> When you link income to an account, the account balance is automatically credited. Keeps your balances accurate.</div>
+                    <div class="dg-feature"><strong>Salary Progression:</strong> Automatically detects salary income entries and builds a Salary Progression chart and timeline with hikes, total growth %, and annual salary total, with optional manual overrides.</div>
                     <div class="dg-feature"><strong>Integration:</strong> Income data is used in Salary Splitter, AI Insights, Cash Flow, and Tax Summary. Changes reflect everywhere.</div>
                   </div>
                 </div>
@@ -4125,6 +4239,7 @@
                     <div class="dg-feature"><strong>Budget Cards:</strong> Each budget shows category, monthly limit, amount spent, remaining amount, and a visual progress bar. Color-coded: green (under budget), amber (near limit), red (over budget).</div>
                     <div class="dg-feature"><strong>Add/Edit/Delete:</strong> Create new budgets or modify existing ones. Set monthly limits per category.</div>
                     <div class="dg-feature"><strong>Progress Bars:</strong> Visual indicators showing how much of the budget has been used. Shows percentage and absolute amounts.</div>
+                    <div class="dg-feature"><strong>Smart Suggestions:</strong> Each budget card can show a hint such as &ldquo;Based on last 3 months, suggest ₹3,200&rdquo; computed from your average spend in that category over the last three months.</div>
                     <div class="dg-feature"><strong>Overspending Alerts:</strong> Categories that exceed their budget are highlighted in red for quick identification. Helps you spot problem areas immediately.</div>
                     <div class="dg-feature"><strong>Auto-Roll Monthly:</strong> Budgets automatically roll over to the next month from your template. No need to recreate budgets each month.</div>
                     <div class="dg-feature"><strong>Budget Health:</strong> Overall budget health is shown in Analytics with visual charts. Shows percentage of budgets on track vs exceeded.</div>
@@ -4173,7 +4288,8 @@
                     <div class="dg-feature"><strong>Pagination:</strong> Shows 6 savings goals per page for better performance.</div>
                     <div class="dg-feature"><strong>Add/Edit/Delete:</strong> Create new goals or modify existing ones. Set target amount and target date.</div>
                     <div class="dg-feature"><strong>Add Contribution:</strong> Modal to add contributions to your savings goals. Record each contribution with date and notes.</div>
-                    <div class="dg-feature"><strong>Progress Bars:</strong> Visual indicators showing how close you are to reaching your goal. Color-coded by completion (green when 100% complete).</div>
+                    <div class="dg-feature"><strong>Progress Bars:</strong> Visual indicators showing how close you are to reaching your goal. Color-coded by completion (green when 100% complete) with 25% / 50% / 75% / 100% milestone pills on each card.</div>
+                    <div class="dg-feature"><strong>Monthly Contribution Calculator:</strong> For active goals with a future target date, shows a helper line such as &ldquo;Save ₹2,400/month to reach by Dec 2026&rdquo; based on the remaining amount and months left.</div>
                     <div class="dg-feature"><strong>Manual Contributions:</strong> Contributions are manual - there's no auto-debit from accounts. You decide when and how much to contribute.</div>
                     <div class="dg-feature"><strong>Target Date:</strong> Set a target date for when you want to achieve your goal. Helps you plan and track progress over time.</div>
                     <div class="dg-feature"><strong>Archiving:</strong> Goals are archived after 2 years when 100% complete. Keeps your active goals view clean.</div>
@@ -4205,6 +4321,7 @@
                     <div class="dg-feature"><strong>Payment History:</strong> Each card shows its full payment history with date, amount, type (payment or cashback), and source account.</div>
                     <div class="dg-feature"><strong>Due Day:</strong> Set the day of the month your payment is due. Powers the due-date badge on each card row and the Payment Reminders panel on the Today screen. Due dates are calculated cross-month — if today is the 28th and due day is the 3rd, the reminder correctly shows &ldquo;Due in 5d&rdquo; rather than treating it as overdue.</div>
                     <div class="dg-feature"><strong>Billing Cycle Start:</strong> Set the day your billing cycle begins each month. Used to calculate current-cycle spend and to determine the correct billing period when checking whether a payment has already been made for an upcoming due date.</div>
+                    <div class="dg-feature"><strong>Statement Countdown:</strong> Each card shows a statement countdown line like &ldquo;Billing date in 8 days · ₹4,200 outstanding&rdquo; so you always know how many days remain in the current cycle and how much is due.</div>
                     <div class="dg-feature"><strong>Record Payment:</strong> Log a credit card bill payment — debits the source bank account and reduces the card's outstanding balance. Also automatically removes the card's reminder from the Payment Reminders panel on the Today screen.</div>
                     <div class="dg-feature"><strong>Cashback:</strong> Record cashback credits against a card. Reduces outstanding balance without debiting an account. Cashback does <em>not</em> count as a bill payment — the payment reminder stays until an actual payment is recorded.</div>
                     <div class="dg-feature"><strong>Net Worth Liability:</strong> Outstanding balance on each credit card is automatically counted as a liability, reducing your net worth accurately.</div>
@@ -4643,6 +4760,37 @@
               <button type="button" id="expense-cancel-edit" class="btn btn-outline-secondary d-none"
                 data-bs-dismiss="modal">Cancel Edit</button>
             </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Salary Hike Log Modal -->
+  <div class="modal fade" tabindex="-1" id="oc-salary-hike" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header" style="background:linear-gradient(135deg,#10b981,#059669);color:#fff">
+          <h5 class="modal-title fw-semibold"><i class="bi bi-graph-up-arrow me-2"></i>Log Salary Hike</h5>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <form id="salary-hike-form" novalidate>
+            <div class="mb-3">
+              <label for="sh-date" class="form-label fw-semibold">Effective Date <span class="text-danger">*</span></label>
+              <input type="date" class="form-control" id="sh-date" required />
+            </div>
+            <div class="mb-3">
+              <label for="sh-amount" class="form-label fw-semibold">New Monthly Salary (₹) <span class="text-danger">*</span></label>
+              <input type="number" class="form-control" id="sh-amount" min="1" step="1" placeholder="e.g. 75000" required />
+            </div>
+            <div class="mb-3">
+              <label for="sh-note" class="form-label fw-semibold">Note <span class="text-muted small fw-normal">(optional)</span></label>
+              <input type="text" class="form-control" id="sh-note" placeholder="e.g. Annual appraisal, Promotion" />
+            </div>
+            <button type="submit" class="btn btn-success w-100 fw-semibold">
+              <i class="bi bi-check-circle-fill me-1"></i>Save Hike
+            </button>
           </form>
         </div>
       </div>
@@ -5139,9 +5287,9 @@
               <input type="text" class="form-control" id="ve-description" />
             </div>
             <div class="mb-3">
-              <label for="ve-odo-reading" class="form-label">ODO Reading (km) <span class="text-muted small">(optional)</span></label>
+              <label for="ve-odo-reading" class="form-label">ODO Reading (km) <span id="ve-odo-label" class="text-muted small">(optional)</span></label>
               <input type="number" class="form-control" id="ve-odo-reading" min="0" step="1" placeholder="e.g. 35300" />
-              <div class="form-text">Enter current odometer reading to enable gap analysis.</div>
+              <div class="form-text" id="ve-odo-hint">Enter current odometer reading to enable gap analysis.</div>
             </div>
             <div class="d-flex gap-2">
               <button type="submit" class="btn btn-success flex-fill">Add Expense</button>
@@ -6067,6 +6215,32 @@
     </div>
   </div>
 
+  <!-- Bill Mark-as-Paid date modal -->
+  <div class="modal fade" tabindex="-1" id="bill-paid-modal" aria-labelledby="bill-paid-modal-label" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered" style="max-width:340px">
+      <div class="modal-content">
+        <div class="modal-header bill-modal-hd">
+          <div class="d-flex align-items-center gap-2">
+            <span class="bill-modal-icon"><i class="bi bi-check-circle-fill"></i></span>
+            <h5 class="modal-title mb-0" id="bill-paid-modal-label">Mark as Paid</h5>
+          </div>
+          <button type="button" class="modal-close-x" data-bs-dismiss="modal" aria-label="Close">&#x2715;</button>
+        </div>
+        <div class="modal-body p-3">
+          <p class="text-muted mb-3" style="font-size:.82rem" id="bill-paid-modal-name"></p>
+          <label class="form-label fw-semibold" style="font-size:.82rem" for="bill-paid-date-input">Payment Date</label>
+          <input type="date" id="bill-paid-date-input" class="form-control form-control-sm" />
+        </div>
+        <div class="modal-footer py-2 px-3 gap-2">
+          <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="button" class="btn btn-sm bill-btn-solid" id="bill-paid-confirm-btn">
+            <i class="bi bi-check-circle-fill me-1"></i>Confirm Payment
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Bills Modal -->
   <div class="modal fade" tabindex="-1" id="oc-bill" aria-labelledby="oc-bill-label" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
@@ -6900,6 +7074,7 @@
     import { init as initSubscriptions, render as renderSubscriptions, deserialize as deserializeSub, processDueSubscriptions } from './js/subscriptions.js';
     import { initSearch } from './js/search.js';
     import { init as initVault } from './js/vault.js';
+    import { init as initAdvisor, render as renderAdvisor } from './js/ai-advisor.js';
     import { init as initReports, render as renderReports, renderVehicleInline, renderBudgetInline } from './js/reports.js';
     import { init as initTrips, render as renderTrips, serializeTrip, deserializeTrip, serializeTripExp, deserializeTripExp } from './js/trip-expenses.js';
     import * as store from './js/store.js';
@@ -6941,6 +7116,7 @@
       'tab-split-expenses':  { title: 'Split Expenses',       subtitle: 'Track shared bills, rent, trips & dining with friends' },
       'tab-analytics':       { title: 'Analytics',            subtitle: 'Visual reports across spending, vehicles, budgets & more' },
       'tab-trips':           { title: 'Trip Expenses',         subtitle: 'Track trips, split costs with friends & family' },
+      'tab-advisor':         { title: 'AI Advisor',             subtitle: '7 personalized financial plans powered by your real data' },
     };
 
     function switchTab(tabId) {
@@ -6966,6 +7142,7 @@
       if (tabId === 'tab-fin-calendar') renderFinCalendar();
       if (tabId === 'tab-split-expenses') renderSplitExpenses();
       if (tabId === 'tab-ai-insights') renderAiInsights();
+      if (tabId === 'tab-advisor') renderAdvisor();
       if (tabId === 'tab-analytics') renderReports();
       if (tabId === 'tab-trips') renderTrips();
     }
@@ -7453,6 +7630,7 @@
       initTheme();
       initSearch();
       initVault();
+      initAdvisor();
       initNotifications();
       _bindInlineChartToggle('veh-charts-toggle',    'veh-charts-panel',    renderVehicleInline);
       _bindInlineChartToggle('budget-charts-toggle', 'budget-charts-panel', renderBudgetInline);

@@ -503,6 +503,7 @@ function _getVePaginator() {
             <div class="dc-footer">
               <span class="dc-badge"><i class="bi bi-calendar3 me-1"></i>${formatDate(e.date)}</span>
               <span class="dc-badge"><i class="bi bi-credit-card me-1"></i>${escapeHtml(e.paymentMethod)}</span>
+              ${e.odoReading > 0 ? `<span class="dc-badge"><i class="bi bi-speedometer2 me-1"></i>${e.odoReading.toLocaleString('en-IN')} km</span>` : ''}
               <div class="dc-actions">
                 <button class="btn btn-sm btn-outline-primary" data-edit-ve="${escapeHtml(e.id)}" title="Edit"><i class="bi bi-pencil-fill"></i></button>
                 <button class="btn btn-sm btn-outline-danger" data-delete-ve="${escapeHtml(e.id)}" title="Delete"><i class="bi bi-trash-fill"></i></button>
@@ -1272,11 +1273,36 @@ function _bindVehicleExpenseForm() {
   const form = document.getElementById('vehicle-expense-form');
   if (!form) return;
   const cancelBtn = document.getElementById('vehicle-expense-cancel-edit');
+  const typeSelect = document.getElementById('ve-type');
+  const odoLabel = document.getElementById('ve-odo-label');
+  const odoHint = document.getElementById('ve-odo-hint');
+  const odoInput = document.getElementById('ve-odo-reading');
+
+  // Update ODO field based on expense type
+  function _updateOdoField() {
+    const expenseType = typeSelect?.value ?? '';
+    const isFuelExpense = /petrol|fuel|diesel|cng|gas/i.test(expenseType);
+    if (isFuelExpense) {
+      if (odoLabel) odoLabel.textContent = '(optional but recommended for gap analysis)';
+      if (odoLabel) odoLabel.classList.remove('text-muted');
+      if (odoLabel) odoLabel.classList.add('text-primary');
+      if (odoHint) odoHint.textContent = 'Enter ODO reading to calculate KM gap in Maintenance Gap Analyzer. Without it, KM gap will show "No ODO".';
+    } else {
+      if (odoLabel) odoLabel.textContent = '(optional)';
+      if (odoLabel) odoLabel.classList.add('text-muted');
+      if (odoLabel) odoLabel.classList.remove('text-primary');
+      if (odoHint) odoHint.textContent = 'Enter current odometer reading to enable gap analysis.';
+    }
+  }
+
+  if (typeSelect) typeSelect.addEventListener('change', _updateOdoField);
+
   if (cancelBtn) {
     cancelBtn.addEventListener('click', () => {
       _editingVehicleExpId = null;
       form.reset();
       cancelBtn.classList.add('d-none');
+      _updateOdoField();
     });
   }
   form.addEventListener('submit', async (e) => {

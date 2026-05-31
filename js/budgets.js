@@ -101,6 +101,34 @@ function _getCatIcon(category) {
   return 'bi-bullseye';
 }
 
+// Compute smart budget suggestion for a category based on last 3 months' average spend
+function _computeSuggestedLimit(category, anchorMonth, expenses) {
+  if (!category || !anchorMonth) return null;
+  const [y, m] = anchorMonth.split('-').map(Number);
+  if (!y || !m) return null;
+
+  const months = [];
+  for (let i = 0; i < 3; i++) {
+    const d = new Date(y, m - 1 - i, 1);
+    const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    months.push(ym);
+  }
+
+  const totals = months.map(ym =>
+    (expenses ?? [])
+      .filter(e => e.category === category && String(e.date ?? '').startsWith(ym))
+      .reduce((s, e) => s + (Number(e.amount) || 0), 0)
+  ).filter(v => v > 0);
+
+  if (!totals.length) return null;
+  const avg = totals.reduce((a, b) => a + b, 0) / totals.length;
+  if (avg <= 0) return null;
+
+  // Round to nearest ₹100 for cleaner numbers
+  const rounded = Math.round(avg / 100) * 100;
+  return rounded > 0 ? rounded : null;
+}
+
 // ─── View state & filter ─────────────────────────────────────────────────────
 let _viewMonth = (() => {
   const n = new Date();
@@ -148,6 +176,8 @@ function _getPaginator() {
           const barCls = over ? 'bud-bar--over' : pct >= 80 ? 'bud-bar--warn' : 'bud-bar--ok';
           const pctCls = over ? 'bud-pct--over' : warning ? 'bud-pct--warn' : 'bud-pct--ok';
           const remaining = Math.max(0, r.monthlyLimit - spent);
+          const suggested = _computeSuggestedLimit(r.category, r.month, expenses);
+          const showSuggest = suggested !== null && Math.abs(suggested - r.monthlyLimit) >= 1;
           const catIcon = _getCatIcon(r.category);
           const iconBg = over
             ? 'linear-gradient(135deg,#ef4444,#f87171)'
@@ -184,6 +214,9 @@ function _getPaginator() {
                 <span class="bud-chip bud-chip--spent"><i class="bi bi-arrow-up-right me-1"></i>Spent ${formatCurrency(spent)}</span>
                 <span class="bud-chip bud-chip--remaining"><i class="bi bi-arrow-down-left me-1"></i>Left ${formatCurrency(remaining)}</span>
               </div>
+              ${showSuggest
+                ? `<div class="bud-suggest-row"><span class="bud-suggest-pill"><i class="bi bi-lightbulb-fill me-1"></i>Based on last 3 months, suggest <strong>${formatCurrency(suggested)}</strong></span></div>`
+                : ''}
             </div>
             <div class="ecard-footer">
               <div class="ecard-actions" style="opacity:1;pointer-events:auto">

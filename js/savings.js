@@ -123,6 +123,25 @@ function _getPaginator() {
             ? 'color:#059669'
             : remaining > 0 && remaining < target ? 'color:#f59e0b' : '';
 
+          // Monthly contribution calculator (only for active, non-overdue goals)
+          let monthlyPlan = '';
+          if (!completed && !isOverdue && g.targetDate && remaining > 0) {
+            const [ty, tm] = g.targetDate.split('-').map(Number);
+            if (ty && tm) {
+              const now = new Date();
+              const cy  = now.getFullYear();
+              const cm  = now.getMonth() + 1;
+              let monthsDiff = (ty - cy) * 12 + (tm - cm) + 1; // inclusive of current month
+              if (monthsDiff <= 0) monthsDiff = 1;
+              const perMonth = remaining / monthsDiff;
+              if (perMonth > 0) {
+                const rounded = Math.max(1, Math.round(perMonth));
+                const labelMonth = new Date(ty, tm - 1, 1).toLocaleString('default', { month: 'short', year: 'numeric' });
+                monthlyPlan = `<div class="sgc2-monthly-plan"><i class="bi bi-calendar-event me-1"></i>Save <strong>${formatCurrency(rounded)}/month</strong> to reach by ${labelMonth}</div>`;
+              }
+            }
+          }
+
           return `
             <div class="sgc2${completed ? ' sgc2--done' : isOverdue ? ' sgc2--overdue' : ''}" style="--sgc-color:${color};border-left:3.5px solid ${borderColor}">
               <div class="sgc2-header">
@@ -162,6 +181,7 @@ function _getPaginator() {
                   <span class="sgc2-stat-val">${g.targetDate ? formatDate(g.targetDate) : '—'}</span>
                 </div>
               </div>
+              ${monthlyPlan}
               ${!completed ? `
               <button class="sgc2-update-toggle" data-toggle-idx="${idx}" style="${isOverdue ? 'border-color:#fca5a5;color:#dc2626' : isDueSoon ? 'border-color:#fcd34d;color:#d97706' : progress >= 90 ? 'border-color:#86efac;color:#059669' : ''}">
                 <i class="bi bi-chevron-down me-1 sgc2-toggle-icon"></i>${isOverdue ? 'Update — Overdue' : isDueSoon ? `Update — ${daysLeft === 0 ? 'Due today' : daysLeft + 'd left'}` : progress >= 90 ? 'Almost there! Update Progress' : 'Update Progress'}

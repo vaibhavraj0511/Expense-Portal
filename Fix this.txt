@@ -1,9 +1,60 @@
-1. Lending mai jb bhi settle ho toh same expense entry se amount deduct ho or full settle h toh delete that entry income mai entry na kre kyuki vo income nhi h already vo payment ka income entry ho gya h so vo double entry hoga
-2. Personal vault mai jo bhi list mai entry h after complete mark after 1 month baad show krna remove kre de...jb bhi same name se entry toh ho show kre de (can we add last complete date so we can know kitne din baad fir se add kr rhe hai)
-3. can we add time in expense and income at what time we expense and income the amount
-4. Recurring is not working...sometime its not showing his data in recurring section check it
-5. KPI Cards of vehicle month's total cost, overall vehicle expenses should be take it from vehicle expense not trip logs
-6. add pagination in trip logs of vehicle section show only 10 entry the way we use pagination for vehicle expense
-7. check bills I can't see paid button in bill
-8. in account section graph ke upper jo current balance, period change, period peak, period low jo hai ussme sirf ek he account ka amount show ho rha h check this and let me know how it work and on click 1M, 3M, 6M, ALL it changes only period change amount not remaining check this also
-9. Remove new tag from the navbar
+📅 Today
+Spending Pace — "₹850 spent today · at this pace: ₹25,500/month (+12% over budget)"
+Quick-add shortcut — one-tap expense entry without opening full modal (amount + category only)
+Daily spending streak — "7 days logged in a row"
+📊 Overview
+Done - Year-over-Year comparison — this month vs same month last year, side by side
+Done - Savings rate sparkline — tiny 6-month trend line on the savings % card
+Done - Biggest expense day heatmap — calendar squares colored by spend intensity
+💸 Expenses
+Payee/Merchant tracking — add a "Paid to" field, then see top payees chart
+Bulk re-categorize — select multiple expenses → assign category in one click
+Duplicate detector — flag same amount + category within 24 hrs
+💰 Income
+Done - Income source breakdown — pie chart of salary vs freelance vs rental etc.
+Done - Month-over-month growth % — +8.3% vs last month on the hero card
+Done - Salary hike log — mark a raise date and see your income progression over time
+🏦 Accounts
+Done - Net worth trend chart — total balance across all accounts over 12 months
+Low balance warning — set a threshold per account, get a red badge when below it
+Interest earned tracker — log interest credited to savings accounts
+💳 Credit Cards
+Done - Statement cycle countdown — "Billing date in 8 days · ₹4,200 outstanding"
+Reward points tracker — log points/cashback earned per card
+Spend-to-limit ratio alert — warn when utilization exceeds 30%
+🎯 Budgets
+Budget vs Actual trend — last 6-month bar chart per category
+Done -Smart suggestions — "Based on last 3 months, suggest ₹3,200 for Food"
+Rollover unused budget — carry leftover to next month optionally
+🐷 Savings Goals
+Done - Monthly contribution calculator — "Save ₹2,400/month to reach goal by Dec 2026"
+Done - Milestone badges — celebrate 25% / 50% / 75% reached
+Interest projection — if linked to FD/RD, show projected maturity value
+🔄 Recurring
+Annual cost projector — "This recurring costs ₹18,600/year total"
+"Due this week" view — highlighted upcoming section at the top
+Skip once — skip a single occurrence without deleting the recurring rule
+📋 Bills
+Payment history per bill — collapsible log of every past payment
+Bill amount trend — mini chart showing if electricity/water is creeping up
+Autopay vs Manual tag — label bills so you know what needs manual action
+🤝 Lendings
+Repayment schedule — break a lend into installments with due dates
+Interest calculator — auto-compute simple interest based on days elapsed
+WhatsApp reminder generator — "Hey! Just a reminder about the ₹500 from March 10" — copy button
+✈️ Trip Expenses
+Done - Per-person cost split — if a trip had multiple travelers, auto-split total
+Done - Trip budget vs actual — set a trip budget upfront and track overspend
+Trip photo/notes — attach a note or cover image to each trip
+👥 Split Expenses
+Settlement via UPI QR — generate a QR code for the owed amount
+Running balance per person — see lifetime net balance with each contact
+Settlement history — timeline of when debts were cleared
+🤖 AI Insights
+Spending personality — "You're a weekend spender — 68% of expenses fall on Fri-Sun"
+Anomaly alerts — "Food spend is 2.4× higher than your 3-month average this week"
+Monthly financial report card — graded score across savings, budget adherence, debt
+🔔 Global / Cross-section
+Notification center — single feed: overdue bills, budget exceeded, low balance, goals due
+Overall financial health score — single 0–100 score aggregated from all sections
+CSV/Excel import — bulk import past expenses from a bank statement

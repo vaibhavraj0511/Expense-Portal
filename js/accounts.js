@@ -37,10 +37,10 @@ export function renderBalanceHistoryChart() {
   const filteredAccounts = filterVal === 'all' ? accounts : accounts.filter(a => a.name === filterVal);
 
   // Apply range tab cutoff
-  const activeRange = document.querySelector('.acc-range-tab--active')?.dataset?.range ?? '6m';
+  const activeRange = document.querySelector('.acc-range-tab--active')?.dataset?.range ?? '1y';
   let cutoffDate = null;
   if (activeRange !== 'all') {
-    const months = activeRange === '1m' ? 1 : activeRange === '3m' ? 3 : 6;
+    const months = activeRange === '1m' ? 1 : activeRange === '3m' ? 3 : activeRange === '6m' ? 6 : 12;
     const d = new Date();
     d.setMonth(d.getMonth() - months);
     cutoffDate = d.toISOString().slice(0, 10);
@@ -194,14 +194,14 @@ export function renderBalanceHistoryChart() {
   // Fix for Issue 2: Period Peak/Low include the carry-forward balance at the period
   //   start boundary so they change meaningfully on every range tab click.
 
-  // Balance of dataset ds strictly BEFORE date (carry-forward, exclusive)
+  // Balance of dataset ds strictly BEFORE date (carry-forward, exclusive).
+  // Returns null if no data point exists before `date` (account created after cutoff).
   const _accBalBefore = (ds, date) => {
     const dates = ds.labels ?? [], vals = ds.data ?? [];
-    let bal = 0;
     for (let i = dates.length - 1; i >= 0; i--) {
-      if (dates[i] < date) { bal = vals[i] ?? 0; break; }
+      if (dates[i] < date) return vals[i] ?? 0;
     }
-    return bal;
+    return null;
   };
   // Balance of dataset ds on or before date (carry-forward, inclusive)
   const _accBalAt = (ds, date) => {
@@ -218,10 +218,15 @@ export function renderBalanceHistoryChart() {
     ? datasets.reduce((s, ds) => s + (ds.data?.[ds.data.length - 1] ?? 0), 0)
     : null;
 
-  // 2. Period start = carry-forward per account to just BEFORE the cutoff
-  //    For "All" range (cutoffDate = null) use each account's very first stored balance
+  // 2. Period start = carry-forward per account to just BEFORE the cutoff.
+  //    For "All" range (cutoffDate = null) use each account's very first stored balance.
+  //    If an account was created WITHIN the period (no data before cutoff), fall back to
+  //    its first recorded balance so Period Change doesn't incorrectly equal Current Balance.
   const _periodStart = cutoffDate
-    ? datasets.reduce((s, ds) => s + _accBalBefore(ds, cutoffDate), 0)
+    ? datasets.reduce((s, ds) => {
+        const b = _accBalBefore(ds, cutoffDate);
+        return s + (b !== null ? b : (ds.data?.[0] ?? 0));
+      }, 0)
     : datasets.reduce((s, ds) => s + (ds.data?.[0] ?? 0), 0);
 
   // 3. All distinct transaction dates within the selected period
@@ -588,7 +593,7 @@ function _renderCcRow(c, expenses, ccPayments, idx) {
     dueBadgeHtml    = `<span class="cc-due-badge ${badgeCls}"><i class="bi bi-calendar-check me-1"></i>${label}</span>`;
   }
 
-  // Cycle spend for info grid
+  // Cycle / statement countdown for info grid
   let cycleCell = '';
   if (c.billingCycleStart) {
     const cycleDates = _getCurrentCycleDates(c.billingCycleStart);
@@ -596,8 +601,9 @@ function _renderCcRow(c, expenses, ccPayments, idx) {
       const cycleSpend = _getCycleSpend(c.name, cycleDates.cycleStart, cycleDates.cycleEnd);
       const daysLeft   = _getDaysUntilCycleEnd(cycleDates.cycleEnd);
       const cpColor    = cycleSpend / c.creditLimit >= .9 ? '#ef4444' : cycleSpend / c.creditLimit >= .7 ? '#f59e0b' : '#10b981';
+      const label      = daysLeft === 0 ? 'Billing today' : `Billing date in ${daysLeft} days`;
       cycleCell = `<div class="cc-info-cell"><i class="bi bi-calendar3" style="color:${cpColor}"></i>
-        <span>Cycle: <strong style="color:${cpColor}">${formatCurrency(cycleSpend)}</strong> &middot; ${daysLeft}d left</span></div>`;
+        <span>${label} &middot; <strong style="color:${cpColor}">${formatCurrency(outstanding)}</strong> outstanding</span></div>`;
     }
   }
   if (!cycleCell && c.billingCycleStart) {

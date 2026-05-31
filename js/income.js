@@ -277,6 +277,9 @@ export function render() {
   _filteredTotal = filtered.reduce((s, r) => s + (Number(r.amount) || 0), 0);
   _getPaginator().update(sorted);
 
+  // Income source breakdown chart (uses current filtered set)
+  _renderIncomeSourceBreakdown(filtered);
+
   // Live hero subtitle
   const heroSub = document.getElementById('inc-hero-sub');
   if (heroSub) {
@@ -352,6 +355,89 @@ export function render() {
         deltaEl.innerHTML = `<i class="bi bi-arrow-${up ? 'up' : 'down'}-short"></i>${Math.abs(pct)}% vs last month`;
       } else { deltaEl.textContent = ''; }
     }
+    // Hero MoM badge
+    const heroMom = el('inc-hero-mom');
+    if (heroMom) {
+      if (lastMonth > 0) {
+        const pct = Math.round(((thisMonth - lastMonth) / lastMonth) * 100);
+        const up  = pct >= 0;
+        heroMom.className = `inc-hero-mom-badge inc-hero-mom-badge--${up ? 'up' : 'down'}`;
+        heroMom.innerHTML = `<i class="bi bi-arrow-${up ? 'up' : 'down'}-short"></i>${up ? '+' : ''}${pct}% vs last month`;
+      } else {
+        heroMom.className = 'inc-hero-mom-badge d-none';
+      }
+    }
+  }
+}
+
+function _renderIncomeSourceBreakdown(records) {
+  const chipsEl = document.getElementById('income-source-chips');
+  const emptyEl = document.getElementById('income-source-empty');
+  if (!chipsEl || !emptyEl) return;
+
+  const positive = records.filter(r => Number(r.amount) > 0);
+  const bySource = positive.reduce((map, r) => {
+    const key = (r.source && r.source.trim()) || 'Other';
+    map[key] = (map[key] ?? 0) + (Number(r.amount) || 0);
+    return map;
+  }, {});
+
+  const entries = Object.entries(bySource).filter(([, amt]) => amt > 0).sort((a, b) => b[1] - a[1]);
+  const total   = entries.reduce((s, [, v]) => s + v, 0);
+
+  if (!entries.length || total <= 0) {
+    chipsEl.innerHTML = '';
+    emptyEl.classList.remove('d-none');
+    return;
+  }
+
+  emptyEl.classList.add('d-none');
+
+  const MAX_VISIBLE_CHIPS = 6; // roughly fits one long row or two shorter rows on desktop
+  let visibleEntries = entries;
+  let hiddenEntries  = [];
+
+  if (entries.length > MAX_VISIBLE_CHIPS) {
+    visibleEntries = entries.slice(0, MAX_VISIBLE_CHIPS);
+    hiddenEntries  = entries.slice(MAX_VISIBLE_CHIPS);
+  }
+
+  const chipsHtml = visibleEntries.map(([src, amt]) => {
+    const pct = total > 0 ? Math.round((amt / total) * 100) : 0;
+    const clr = _srcColor(src);
+    return `<div class="inc-source-chip">
+      <span class="inc-source-chip-dot" style="background:${clr.color}"></span>
+      <span class="inc-source-chip-name">${escapeHtml(src)}</span>
+      <span class="inc-source-chip-amt">${formatCurrency(amt)}</span>
+      <span class="inc-source-chip-pct">${pct}%</span>
+    </div>`;
+  }).join('');
+
+  const hiddenHtml = hiddenEntries.map(([src, amt]) => {
+    const pct = total > 0 ? Math.round((amt / total) * 100) : 0;
+    const clr = _srcColor(src);
+    return `<div class="inc-source-chip inc-source-chip--hidden d-none">
+      <span class="inc-source-chip-dot" style="background:${clr.color}"></span>
+      <span class="inc-source-chip-name">${escapeHtml(src)}</span>
+      <span class="inc-source-chip-amt">${formatCurrency(amt)}</span>
+      <span class="inc-source-chip-pct">${pct}%</span>
+    </div>`;
+  }).join('');
+
+  const moreBtnHtml = hiddenEntries.length
+    ? `<button type="button" class="inc-source-more-btn" id="inc-source-more-btn">
+         <i class="bi bi-chevron-down"></i>Show ${hiddenEntries.length} more
+       </button>`
+    : '';
+
+  chipsEl.innerHTML = chipsHtml + hiddenHtml + moreBtnHtml;
+
+  const moreBtn = document.getElementById('inc-source-more-btn');
+  if (moreBtn) {
+    moreBtn.addEventListener('click', () => {
+      chipsEl.querySelectorAll('.inc-source-chip--hidden').forEach(el => el.classList.remove('d-none'));
+      moreBtn.remove();
+    });
   }
 }
 
@@ -364,7 +450,317 @@ export function render() {
 export function init() {
   _bindForm();
   _bindFilters();
+  _bindSalaryHikeForm();
+  renderSalaryHikeLog();
   store.on('income', render);
+  store.on('income', renderSalaryHikeLog);
+}
+
+// ── Salary Hike Log & Source Breakdown ───────────────────────────────────────
+
+const _SH_KEY = 'ep_salary_hikes';
+let _shChart = null;
+
+function _getHikes() {
+  try { return JSON.parse(localStorage.getItem(_SH_KEY) ?? '[]'); } catch { return []; }
+}
+
+function _saveHikes(arr) {
+  localStorage.setItem(_SH_KEY, JSON.stringify(arr));
+}
+
+// Keywords used to detect salary-type income sources
+const _SALARY_KEYWORDS = ['salary', 'wages', 'wage', 'paycheck', 'payroll', 'stipend', 'ctc', 'basic pay', 'pay slip'];
+
+function _isSalarySource(source) {
+  const s = (source ?? '').toLowerCase();
+  return _SALARY_KEYWORDS.some(kw => s.includes(kw));
+}
+
+function _autoDetectSalary() {
+  const income = store.get('income') ?? [];
+  const salaryEntries = income.filter(r => _isSalarySource(r.source));
+  if (!salaryEntries.length) return null;
+
+  // Group by YYYY-MM, sum amounts
+  const byMonth = {};
+  salaryEntries.forEach(r => {
+    const ym = String(r.date ?? '').slice(0, 7);
+    if (ym.length !== 7) return;
+    byMonth[ym] = (byMonth[ym] || 0) + (Number(r.amount) || 0);
+  });
+
+  const months = Object.keys(byMonth).sort();
+  if (!months.length) return null;
+
+  // Build chart data (every month)
+  const chartLabels = months.map(ym => {
+    const [y, m] = ym.split('-');
+    return new Date(+y, +m - 1, 1).toLocaleString('en-IN', { month: 'short', year: '2-digit' });
+  });
+  const chartData = months.map(ym => byMonth[ym]);
+
+  // Extend to today's label if last month is not current
+  const now = new Date();
+  const curYM = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  if (months[months.length - 1] < curYM) {
+    chartLabels.push('Now');
+    chartData.push(byMonth[months[months.length - 1]]);
+  }
+
+  // Detect change points (where amount changed vs prior month)
+  const changePoints = [];
+  months.forEach((ym, i) => {
+    const amt  = byMonth[ym];
+    const prev = i > 0 ? byMonth[months[i - 1]] : null;
+    if (prev === null || Math.abs(amt - prev) > 0.5) {
+      changePoints.push({ ym, amount: amt, prevAmount: prev });
+    }
+  });
+
+  return { months, byMonth, chartLabels, chartData, changePoints };
+}
+
+function _drawSalaryChart(labels, data, pointCount) {
+  const canvas = document.getElementById('salary-hike-chart');
+  if (!canvas || typeof Chart === 'undefined') return;
+  if (_shChart) { _shChart.destroy(); _shChart = null; }
+  _shChart = new Chart(canvas, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Monthly Salary',
+        data,
+        borderColor: '#10b981',
+        backgroundColor: '#10b98118',
+        borderWidth: 2.5,
+        pointRadius: ctx => ctx.dataIndex < pointCount ? 4 : 0,
+        pointHoverRadius: 6,
+        pointBackgroundColor: '#10b981',
+        pointBorderColor: '#fff',
+        pointBorderWidth: 2,
+        stepped: 'before',
+        fill: true,
+        tension: 0,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: ctx => ` ${formatCurrency(ctx.raw)}/month` } },
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { color: '#94a3b8', font: { size: 10 } } },
+        y: {
+          beginAtZero: false,
+          grid: { color: '#f1f5f9' },
+          ticks: {
+            color: '#94a3b8', font: { size: 10 }, maxTicksLimit: 5,
+            callback: v => v >= 1e5 ? '₹' + (v / 1e5).toFixed(1) + 'L' : v >= 1e3 ? '₹' + (v / 1e3).toFixed(0) + 'K' : '₹' + v,
+          },
+        },
+      },
+    },
+  });
+}
+
+export function renderSalaryHikeLog() {
+  const container = document.getElementById('salary-hike-container');
+  if (!container) return;
+
+  const auto        = _autoDetectSalary();
+  const manualHikes = _getHikes().sort((a, b) => a.date.localeCompare(b.date));
+
+  // ── AUTO MODE: salary income entries found ──────────────────────────────
+  if (auto) {
+    const { chartLabels, chartData, changePoints, byMonth } = auto;
+    const first    = chartData[0];
+    const last     = chartData[chartData.length - (chartLabels[chartLabels.length - 1] === 'Now' ? 2 : 1)];
+    const totalPct = first > 0 ? Math.round(((last - first) / first) * 100) : 0;
+
+    // Annual total: sum all salary months in current year
+    const curYear  = String(new Date().getFullYear());
+    const annualTotal = Object.entries(byMonth)
+      .filter(([ym]) => ym.startsWith(curYear))
+      .reduce((s, [, v]) => s + v, 0);
+
+    const VISIBLE_LIMIT = 5;
+    const reversed = [...changePoints].reverse();
+    const visible  = reversed.slice(0, VISIBLE_LIMIT);
+    const hidden   = reversed.slice(VISIBLE_LIMIT);
+
+    const _buildCpHtml = (cp, ri) => {
+      const diff = cp.prevAmount !== null ? cp.amount - cp.prevAmount : null;
+      const pct  = (diff !== null && cp.prevAmount > 0) ? Math.round((diff / cp.prevAmount) * 100) : null;
+      const [y, m] = cp.ym.split('-');
+      const label  = new Date(+y, +m - 1, 1).toLocaleString('en-IN', { month: 'long', year: 'numeric' });
+      return `<div class="sh-item">
+        <div class="sh-dot ${ri === 0 ? 'sh-dot--cur' : ''}"></div>
+        <div class="sh-item-body">
+          <div class="sh-item-top">
+            <span class="sh-item-date">${label}</span>
+            <span class="sh-item-note sh-item-note--auto">auto</span>
+          </div>
+          <div class="sh-item-bottom">
+            <span class="sh-item-amt">${formatCurrency(cp.amount)}/mo</span>
+            ${diff !== null
+              ? `<span class="sh-item-delta ${diff >= 0 ? 'sh-delta--up' : 'sh-delta--down'}">
+                  <i class="bi bi-arrow-${diff >= 0 ? 'up' : 'down'}-short"></i>${pct !== null ? Math.abs(pct) + '% ' : ''}(${diff >= 0 ? '+' : ''}${formatCurrency(Math.abs(diff))})
+                </span>`
+              : '<span class="sh-item-first">First recorded salary</span>'}
+          </div>
+        </div>
+      </div>`;
+    };
+
+    container.innerHTML = `
+      <div class="sh-auto-badge"><i class="bi bi-magic me-1"></i>Auto-detected from your&nbsp;<strong>Salary</strong>&nbsp;income entries</div>
+      <div class="sh-summary">
+        <div class="sh-stat"><div class="sh-stat-lbl">Starting</div><div class="sh-stat-val">${formatCurrency(first)}/mo</div></div>
+        <div class="sh-stat"><div class="sh-stat-lbl">Current</div><div class="sh-stat-val" style="color:#10b981">${formatCurrency(last)}/mo</div></div>
+        <div class="sh-stat"><div class="sh-stat-lbl">Total Growth</div><div class="sh-stat-val" style="color:${totalPct >= 0 ? '#10b981' : '#ef4444'}">${totalPct >= 0 ? '+' : ''}${totalPct}%</div></div>
+        <div class="sh-stat sh-stat--annual"><div class="sh-stat-lbl">${curYear} Total</div><div class="sh-stat-val" style="color:#6366f1">${formatCurrency(annualTotal)}</div></div>
+      </div>
+      <div class="sh-chart-wrap"><canvas id="salary-hike-chart"></canvas></div>
+      <div class="sh-timeline" id="sh-timeline-wrap">
+        ${visible.map((cp, ri) => _buildCpHtml(cp, ri)).join('')}
+        ${hidden.length > 0 ? `
+          <div id="sh-hidden-rows" class="d-none">
+            ${hidden.map((cp, ri) => _buildCpHtml(cp, VISIBLE_LIMIT + ri)).join('')}
+          </div>
+          <button class="sh-show-more-btn" id="sh-show-more">
+            <i class="bi bi-chevron-down me-1"></i>Show ${hidden.length} older entr${hidden.length === 1 ? 'y' : 'ies'}
+          </button>` : ''}
+        ${manualHikes.length > 0 ? `
+          <div class="sh-manual-divider"><span>Manual overrides</span></div>
+          ${[...manualHikes].reverse().map((h, ri) => {
+            const idx  = manualHikes.length - 1 - ri;
+            const prev = idx > 0 ? manualHikes[idx - 1].amount : null;
+            const diff = prev !== null ? h.amount - prev : null;
+            const pct  = (diff !== null && prev > 0) ? Math.round((diff / prev) * 100) : null;
+            return `<div class="sh-item">
+              <div class="sh-dot"></div>
+              <div class="sh-item-body">
+                <div class="sh-item-top">
+                  <span class="sh-item-date">${formatDate(h.date)}</span>
+                  ${h.note ? `<span class="sh-item-note">${escapeHtml(h.note)}</span>` : ''}
+                  <button class="sh-del-btn ms-auto" data-id="${h.id}" title="Delete"><i class="bi bi-trash3"></i></button>
+                </div>
+                <div class="sh-item-bottom">
+                  <span class="sh-item-amt">${formatCurrency(h.amount)}/mo</span>
+                  ${diff !== null
+                    ? `<span class="sh-item-delta ${diff >= 0 ? 'sh-delta--up' : 'sh-delta--down'}"><i class="bi bi-arrow-${diff >= 0 ? 'up' : 'down'}-short"></i>${pct !== null ? Math.abs(pct) + '% ' : ''}(${diff >= 0 ? '+' : ''}${formatCurrency(Math.abs(diff))})</span>`
+                    : '<span class="sh-item-first">Starting salary</span>'}
+                </div>
+              </div>
+            </div>`;
+          }).join('')}` : ''}
+      </div>`;
+
+    container.querySelectorAll('.sh-del-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        _saveHikes(_getHikes().filter(h => h.id !== btn.dataset.id));
+        renderSalaryHikeLog();
+      });
+    });
+
+    document.getElementById('sh-show-more')?.addEventListener('click', (e) => {
+      document.getElementById('sh-hidden-rows')?.classList.remove('d-none');
+      e.target.remove();
+    });
+
+    _drawSalaryChart(chartLabels, chartData, auto.months.length);
+    return;
+  }
+
+  // ── MANUAL MODE: no salary income entries found ────────────────────────
+  if (manualHikes.length === 0) {
+    if (_shChart) { _shChart.destroy(); _shChart = null; }
+    container.innerHTML = `
+      <div class="sh-auto-hint">
+        <i class="bi bi-magic me-2" style="color:#10b981"></i>
+        <span>Add income entries with source <strong>Salary</strong> and this chart auto-fills — no manual logging needed.</span>
+      </div>`;
+    return;
+  }
+
+  // Render manual hikes only
+  const first    = manualHikes[0].amount;
+  const last     = manualHikes[manualHikes.length - 1].amount;
+  const totalPct = first > 0 ? Math.round(((last - first) / first) * 100) : 0;
+  const todayStr = new Date().toISOString().split('T')[0];
+  const labels   = manualHikes.map(h => formatDate(h.date));
+  const data     = manualHikes.map(h => h.amount);
+  if (manualHikes[manualHikes.length - 1].date < todayStr) { labels.push('Today'); data.push(last); }
+
+  container.innerHTML = `
+    <div class="sh-summary">
+      <div class="sh-stat"><div class="sh-stat-lbl">Starting</div><div class="sh-stat-val">${formatCurrency(first)}/mo</div></div>
+      <div class="sh-stat"><div class="sh-stat-lbl">Current</div><div class="sh-stat-val" style="color:#10b981">${formatCurrency(last)}/mo</div></div>
+      <div class="sh-stat"><div class="sh-stat-lbl">Total Growth</div><div class="sh-stat-val" style="color:${totalPct >= 0 ? '#10b981' : '#ef4444'}">${totalPct >= 0 ? '+' : ''}${totalPct}%</div></div>
+      <div class="sh-stat"><div class="sh-stat-lbl">Hikes Logged</div><div class="sh-stat-val">${manualHikes.length}</div></div>
+    </div>
+    <div class="sh-chart-wrap"><canvas id="salary-hike-chart"></canvas></div>
+    <div class="sh-timeline">
+      ${[...manualHikes].reverse().map((h, ri) => {
+        const idx  = manualHikes.length - 1 - ri;
+        const prev = idx > 0 ? manualHikes[idx - 1].amount : null;
+        const diff = prev !== null ? h.amount - prev : null;
+        const pct  = (diff !== null && prev > 0) ? Math.round(((h.amount - prev) / prev) * 100) : null;
+        return `<div class="sh-item">
+          <div class="sh-dot ${idx === manualHikes.length - 1 ? 'sh-dot--cur' : ''}"></div>
+          <div class="sh-item-body">
+            <div class="sh-item-top">
+              <span class="sh-item-date">${formatDate(h.date)}</span>
+              ${h.note ? `<span class="sh-item-note">${escapeHtml(h.note)}</span>` : ''}
+              <button class="sh-del-btn ms-auto" data-id="${h.id}" title="Delete"><i class="bi bi-trash3"></i></button>
+            </div>
+            <div class="sh-item-bottom">
+              <span class="sh-item-amt">${formatCurrency(h.amount)}/mo</span>
+              ${diff !== null
+                ? `<span class="sh-item-delta ${diff >= 0 ? 'sh-delta--up' : 'sh-delta--down'}"><i class="bi bi-arrow-${diff >= 0 ? 'up' : 'down'}-short"></i>${pct !== null ? Math.abs(pct) + '%' : ''} (${diff >= 0 ? '+' : ''}${formatCurrency(Math.abs(diff))})</span>`
+                : '<span class="sh-item-first">Starting salary</span>'}
+            </div>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>`;
+
+  container.querySelectorAll('.sh-del-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      _saveHikes(_getHikes().filter(h => h.id !== btn.dataset.id));
+      renderSalaryHikeLog();
+    });
+  });
+
+  _drawSalaryChart(labels, data, manualHikes.length);
+}
+
+function _bindSalaryHikeForm() {
+  const form = document.getElementById('salary-hike-form');
+  if (!form) return;
+
+  document.getElementById('oc-salary-hike')?.addEventListener('show.bs.modal', () => {
+    const d = document.getElementById('sh-date');
+    if (d && !d.value) d.value = new Date().toISOString().split('T')[0];
+  });
+
+  form.addEventListener('submit', e => {
+    e.preventDefault();
+    const date   = document.getElementById('sh-date')?.value?.trim() ?? '';
+    const amount = parseFloat(document.getElementById('sh-amount')?.value ?? '');
+    const note   = document.getElementById('sh-note')?.value?.trim() ?? '';
+    if (!date || !amount || amount <= 0) return;
+    const hikes = _getHikes();
+    hikes.push({ id: Date.now().toString(), date, amount, note });
+    _saveHikes(hikes);
+    form.reset();
+    bootstrap.Modal.getInstance(document.getElementById('oc-salary-hike'))?.hide();
+    renderSalaryHikeLog();
+  });
 }
 
 function _bindForm() {

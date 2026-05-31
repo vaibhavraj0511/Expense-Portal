@@ -372,27 +372,56 @@ function _startEdit(id) {
   bootstrap.Modal.getOrCreateInstance(document.getElementById('oc-bill')).show();
 }
 
-async function _markPaid(id) {
+function _markPaid(id) {
   const bills = store.get('bills') ?? [];
-  const bill = bills.find(b => b.id === id);
+  const bill  = bills.find(b => b.id === id);
+  if (!bill) return;
+
+  const today      = new Date().toISOString().split('T')[0];
+  const dateInput  = document.getElementById('bill-paid-date-input');
+  const nameEl     = document.getElementById('bill-paid-modal-name');
+  const confirmBtn = document.getElementById('bill-paid-confirm-btn');
+  const modalEl    = document.getElementById('bill-paid-modal');
+  if (!modalEl) { _markPaidSave(id, today); return; }
+
+  if (dateInput)  dateInput.value = today;
+  if (nameEl)     nameEl.textContent = `Bill: ${bill.name}  ·  ${bill.category}`;
+
+  const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+
+  // Remove any previous listener before attaching a new one
+  const newBtn = confirmBtn.cloneNode(true);
+  confirmBtn.parentNode.replaceChild(newBtn, confirmBtn);
+  newBtn.addEventListener('click', async () => {
+    const chosen = document.getElementById('bill-paid-date-input')?.value;
+    if (!chosen) return;
+    modal.hide();
+    await _markPaidSave(id, chosen);
+  });
+
+  modal.show();
+}
+
+async function _markPaidSave(id, dateStr) {
+  const bills = store.get('bills') ?? [];
+  const bill  = bills.find(b => b.id === id);
   if (!bill) return;
   const prevLastPaid = bill.lastPaid;
-  const today = new Date().toISOString().split('T')[0];
-  const updated = bills.map(b => b.id === id ? { ...b, lastPaid: today } : b);
+  const updated = bills.map(b => b.id === id ? { ...b, lastPaid: dateStr } : b);
   try {
     await writeAllRows(CONFIG.sheets.bills, updated.map(serialize));
     store.set('bills', updated);
     const { showUndoToast } = await import('./undo.js');
     showUndoToast(`${bill.name} marked as paid`, async () => {
-      const current = store.get('bills') ?? [];
+      const current  = store.get('bills') ?? [];
       const reverted = current.map(b => b.id === id ? { ...b, lastPaid: prevLastPaid } : b);
       await writeAllRows(CONFIG.sheets.bills, reverted.map(serialize));
       store.set('bills', reverted);
     });
   } catch (err) {
-    const errEl = document.getElementById('bills-error-text');
+    const errEl  = document.getElementById('bills-error-text');
     const banner = document.getElementById('bills-error-banner');
-    if (errEl) errEl.textContent = err.message ?? 'Failed to mark as paid.';
+    if (errEl)  errEl.textContent = err.message ?? 'Failed to mark as paid.';
     if (banner) banner.classList.remove('d-none');
   }
 }

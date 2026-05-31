@@ -3,6 +3,7 @@ import * as store from './store.js';
 import { computeAll, computeIncomeExpenseRatio, classifyCategory, computeSpendingDayTiers } from './insights.js';
 
 const LS_KEY = 'ai-insights-dismissed';
+const ANOMALY_LS_KEY = 'ai-anomalies-dismissed';
 
 // ─── localStorage helpers ─────────────────────────────────────────────────────
 
@@ -19,6 +20,44 @@ function dismissRecommendation(category) {
 }
 function resetDismissed() {
   try { localStorage.removeItem(LS_KEY); } catch { /* ignore */ }
+  render();
+}
+
+function getDismissedAnomalies() {
+  try {
+    const raw = localStorage.getItem(ANOMALY_LS_KEY);
+    if (!raw) return [];
+    const data = JSON.parse(raw);
+    // Auto-clear on new month
+    if (data.clearedMonth) {
+      const now = new Date();
+      const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      if (data.clearedMonth !== currentMonth) {
+        localStorage.removeItem(ANOMALY_LS_KEY);
+        return [];
+      }
+    }
+    return data.ids ?? [];
+  } catch { return []; }
+}
+function dismissAnomaly(id) {
+  try {
+    const raw = localStorage.getItem(ANOMALY_LS_KEY);
+    const data = raw ? JSON.parse(raw) : { ids: [], clearedMonth: null };
+    if (!data.ids.includes(id)) {
+      data.ids.push(id);
+      // Set cleared month to current month when first dismissal happens
+      if (!data.clearedMonth) {
+        const now = new Date();
+        data.clearedMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      }
+      localStorage.setItem(ANOMALY_LS_KEY, JSON.stringify(data));
+    }
+  } catch { /* ignore */ }
+  render();
+}
+function resetDismissedAnomalies() {
+  try { localStorage.removeItem(ANOMALY_LS_KEY); } catch { /* ignore */ }
   render();
 }
 
@@ -305,21 +344,35 @@ function renderForecasts(forecasts, total) {
 // ─── Anomalies ────────────────────────────────────────────────────────────────
 
 function renderAnomalies(anomalies) {
-  if (!anomalies.length) return `<div class="ai-all-good"><i class="bi bi-shield-check"></i> No unusual spending detected — you're on track!</div>`;
-  return `<div class="ai-anomaly-list">
-    ${anomalies.map(a => `
-    <div class="ai-anomaly-row">
-      <div class="ai-anomaly-icon"><i class="bi bi-exclamation-triangle-fill"></i></div>
-      <div class="ai-anomaly-body">
-        <div class="ai-anomaly-title">${esc(a.label)}</div>
-        <div class="ai-anomaly-meta">${esc(a.category)} · avg ${fmt(a.mean)}</div>
-      </div>
-      <div class="ai-anomaly-right">
-        <div class="ai-anomaly-amt">${fmt(a.amount)}</div>
-        <span class="ai-z-badge">${a.mean > 0 ? (a.amount / a.mean).toFixed(1) + '× avg' : 'High'}</span>
-      </div>
-    </div>`).join('')}
-  </div>`;
+  const dismissed = getDismissedAnomalies();
+  const visible = anomalies.filter(a => !dismissed.includes(a.id ?? `${a.type}-${a.category}-${a.label}`));
+
+  if (!visible.length) {
+    return dismissed.length > 0
+      ? `<div class="ai-section-empty"><i class="bi bi-check2-all"></i> All anomalies dismissed. <button class="ai-reset-btn" id="ai-anomaly-reset">Reset dismissed (${dismissed.length})</button></div>`
+      : `<div class="ai-all-good"><i class="bi bi-shield-check"></i> No unusual spending detected — you're on track!</div>`;
+  }
+
+  return `
+    ${dismissed.length > 0 ? `<div class="ai-rec-header-row"><button class="ai-reset-btn" id="ai-anomaly-reset">Reset dismissed (${dismissed.length})</button></div>` : ''}
+    <div class="ai-anomaly-list">
+      ${visible.map(a => {
+        const id = a.id ?? `${a.type}-${a.category}-${a.label}`;
+        return `
+        <div class="ai-anomaly-row">
+          <div class="ai-anomaly-icon"><i class="bi bi-exclamation-triangle-fill"></i></div>
+          <div class="ai-anomaly-body">
+            <div class="ai-anomaly-title">${esc(a.label)}</div>
+            <div class="ai-anomaly-meta">${esc(a.category)} · avg ${fmt(a.mean)}</div>
+          </div>
+          <div class="ai-anomaly-right">
+            <div class="ai-anomaly-amt">${fmt(a.amount)}</div>
+            <span class="ai-z-badge">${a.mean > 0 ? (a.amount / a.mean).toFixed(1) + '× avg' : 'High'}</span>
+            <button class="ai-dismiss-btn" data-anomaly-id="${esc(id)}" title="Dismiss"><i class="bi bi-x-lg"></i></button>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>`;
 }
 
 // ─── Classification ───────────────────────────────────────────────────────────
@@ -1293,13 +1346,26 @@ export function render() {
     try { drawSparkline(c, JSON.parse(c.dataset.vals ?? '[]'), c.dataset.dir ?? 'Stable'); } catch { /* ignore */ }
   });
 
-  // Dismiss buttons
+  // Dismiss buttons (recommendations)
   container.querySelectorAll('[data-cat]').forEach(btn => {
     btn.addEventListener('click', () => dismissRecommendation(btn.dataset.cat));
   });
 
-  const resetBtn = container.querySelector('.ai-reset-btn');
-  if (resetBtn) resetBtn.addEventListener('click', resetDismissed);
+  // Dismiss buttons (anomalies)
+  container.querySelectorAll('[data-anomaly-id]').forEach(btn => {
+    btn.addEventListener('click', () => dismissAnomaly(btn.dataset.anomalyId));
+  });
+
+  // Reset buttons
+  container.querySelectorAll('.ai-reset-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (btn.id === 'ai-anomaly-reset') {
+        resetDismissedAnomalies();
+      } else {
+        resetDismissed();
+      }
+    });
+  });
 
   const refreshBtn = container.querySelector('#ai-refresh-btn');
   if (refreshBtn) refreshBtn.addEventListener('click', render);
